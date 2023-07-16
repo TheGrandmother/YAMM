@@ -5,14 +5,12 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-
-
 [dependencies]
 rp2040-hal = "0.8.1"
 rp-pico = "0.7.0"
 embedded-hal = "0.2.7"
 panic-halt = "0.2.0"
-cortex-m-rt = "0.7.3"
+cortex-m-rt = { version = "0.7.3", optional = true}
 cortex-m = "0.7.7"
 fugit = "0.3.7"
 embedded-graphics = "0.8.0"
@@ -39,7 +37,7 @@ critical-section = "1.1.1"
 # boot2 = ["rp2040-boot2"]
 # 
 # Minimal startup / runtime for Cortex-M microcontrollers
-# rt = ["cortex-m-rt","rp2040-hal/rt"]
+rt = ["cortex-m-rt","rp2040-hal/rt"]
 # 
 # # This enables a fix for USB errata 5: USB device fails to exit RESET state on busy USB bus.
 # # Only required for RP2040 B0 and RP2040 B1, but it also works for RP2040 B2 and above

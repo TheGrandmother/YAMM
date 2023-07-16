@@ -2,9 +2,13 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 
+
+
 #[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [SW0_IRQ])]
 mod fuckall {
     use panic_halt as _;
+
+    use fugit::RateExtU32;
 
     use embedded_hal::digital::v2::OutputPin;
 
@@ -24,6 +28,7 @@ mod fuckall {
     use rtic_sync::{channel::*, make_channel};
 
     use rp2040_hal::gpio;
+    use gpio::Pin;
 
     const MESSAGE_CAPACITY: usize = 5;
     type MessageSender = Sender<'static, heapless::String<128>, MESSAGE_CAPACITY>;
@@ -33,6 +38,11 @@ mod fuckall {
     struct Local {
         usb_bus: UsbBusAllocator<hal::usb::UsbBus>,
         button_pin: gpio::Pin<gpio::pin::bank0::Gpio16, gpio::Input<gpio::PullUp>>,
+        uart_sender: MessageSender,
+        uart: hal::uart::UartPeripheral<
+            hal::uart::Enabled,
+            rp2040_hal::pac::UART0,
+            (Pin<gpio::bank0::Gpio0,gpio::Function<gpio::Uart>>  ,Pin<gpio::bank0::Gpio1,gpio::Function<gpio::Uart>  >)> ,
     }
 
     #[shared]
@@ -86,6 +96,24 @@ mod fuckall {
             &mut resets,
         ));
 
+
+        // Set up UART on GP0 and GP1 (Pico pins 1 and 2)
+        let uart_pins = (
+            pins.gpio0.into_mode::<gpio::FunctionUart>(),
+            pins.gpio1.into_mode::<gpio::FunctionUart>(),
+        );
+
+        // Need to perform clock init before using UART or it will freeze.
+        let mut uart = hal::uart::UartPeripheral::new(c.device.UART0, uart_pins, &mut resets).enable(
+            hal::uart::UartConfig::new(31250.Hz(), hal::uart::DataBits::Eight, None, hal::uart::StopBits::One),
+            hal::Clock::freq(&clocks.peripheral_clock),
+        ).unwrap();
+        uart.enable_rx_interrupt();
+
+
+
+
+
         let (s, r) = make_channel!(heapless::String<128>, MESSAGE_CAPACITY);
 
         usb_handler::spawn(r).ok();
@@ -96,6 +124,8 @@ mod fuckall {
             Local {
                 usb_bus,
                 button_pin,
+                uart_sender: s.clone(),
+                uart,
             },
         );
     }
@@ -116,6 +146,19 @@ mod fuckall {
         if cx.local.button_pin.interrupt_status(EdgeLow) {
             cx.local.button_pin.clear_interrupt(EdgeLow);
         }
+    }
+
+    #[task(local = [uart_sender, uart], shared=[led], binds=UART0_IRQ)]
+    fn uart(mut cx: uart::Context) {
+        cx.shared.led.lock(|l| l.set_high().unwrap());
+        let mut bob = [0u8; 64];
+        let mut text: heapless::String<128> = heapless::String::new();
+        let _ = match cx.local.uart.read_raw(&mut bob) {
+            Ok(c) => c,
+            Err(_) => 0,
+        };
+        writeln!(&mut text, "{:?}: Uart {:x} {:x} {:x}", Timer::now().ticks(), bob[0], bob[1], bob[2]).unwrap();
+        let _ = cx.local.uart_sender.try_send(text);
     }
 
     #[task(local = [], shared=[led])]
@@ -140,7 +183,7 @@ mod fuckall {
             .device_class(2) // from: https://www.usb.org/defined-class-codes
             .build();
 
-        Timer::delay(100.millis()).await;
+        Timer::delay(1000.millis()).await;
         c.shared.led.lock(|l| l.set_high().unwrap());
         Timer::delay(150.millis()).await;
         c.shared.led.lock(|l| l.set_low().unwrap());
