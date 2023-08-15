@@ -25,6 +25,7 @@ rtic-monotonics = { version = "1.0.0", features = ["rp2040"] }
 rtic = { version = "2.0.0", features = [ "thumbv6-backend" ] }
 rtic-sync = "1.0.1"
 critical-section = "1.1.1"
+midly = {version = "0.5.3",  default-features = false}
 
 [features]
 # # This is the set of features we enable by default
