@@ -6,10 +6,12 @@
 #![allow(unreachable_code)]
 
 mod pitched_channel;
+mod types;
 
 #[rtic::app(device = rp_pico::hal::pac, peripherals = true, dispatchers = [SW0_IRQ, SW1_IRQ, SW2_IRQ])]
 mod fuckall {
     use heapless::arc_pool;
+
     use panic_halt as _;
 
     use fugit::RateExtU32;
@@ -44,12 +46,15 @@ mod fuckall {
 
     use crate::pitched_channel;
     use crate::pitched_channel::PitchedChannel;
+    use crate::types::*;
 
 
     type MaybeUninit<X> = core::mem::MaybeUninit<X>;
 
 
     const MESSAGE_CAPACITY: usize = 16;
+    const PITCHED_CHANELL: u8 = 1;
+    const DRUM_CHANELL: u8 = 2;
     type MessageSender<T> = Sender<'static, T, MESSAGE_CAPACITY>;
     type MessageReceiver<T> = Receiver<'static, T, MESSAGE_CAPACITY>;
     type UartType = hal::uart::UartPeripheral<
@@ -69,11 +74,9 @@ mod fuckall {
         watchdog: hal::Watchdog,
         uart:UartType,
         midi_sender: MessageSender<MidiEvent>,
-        voice_1_slice: hal::pwm::Slice<hal::pwm::Pwm7, pwm::FreeRunning>,
-        voice_1_gate: gpio::Pin<gpio::pin::bank0::Gpio13, gpio::PushPullOutput>,
-        button_pin: gpio::Pin<gpio::pin::bank0::Gpio18, gpio::Input<rp2040_hal::gpio::PullUp>>,
-        clock_out: gpio::Pin<gpio::pin::bank0::Gpio19, gpio::PushPullOutput>,
-        clock_high: bool
+        clock_high: bool,
+        drums: Drums,
+        pitched_channel: PitchedChannel,
     }
 
     #[shared]
@@ -113,24 +116,49 @@ mod fuckall {
             &mut resets,
         );
 
-        let button_pin = pins.gpio18.into_pull_up_input();
-        button_pin.set_interrupt_enabled(EdgeLow, true);
-        button_pin.set_interrupt_enabled(EdgeHigh, true);
-
-
         let mut led = pins.led.into_push_pull_output();
         if watchdog_timeout {
             led.set_low().unwrap();
-            let mut count = 100000;
-            while count > 0 {count -= 1;}
+            let mut count = 100;
+            let mut blinks = 10;
+            while blinks > 0 {
+                while count > 0 {count -= 1;}
+                led.set_high().unwrap();
+                count = 10000;
+                while count > 0 {count -= 1;}
+                led.set_low().unwrap();
+                blinks -= 1;
+            }
+        } else {
             led.set_high().unwrap();
-            count = 100000;
+            let mut count = 1000;
             while count > 0 {count -= 1;}
             led.set_low().unwrap();
+
         }
         watchdog.start(fugit::ExtU32::micros(300000));
 
-        let clock_out = pins.gpio19.into_push_pull_output();
+
+        // Drummmms
+
+        let mut drums = Drums {
+            open_hh: pins.gpio9.into_push_pull_output(),
+            clap: pins.gpio10.into_push_pull_output(),
+            snare: pins.gpio11.into_push_pull_output(),
+            kick: pins.gpio12.into_push_pull_output(),
+            fx: pins.gpio20.into_push_pull_output(),
+            accent: pins.gpio21.into_push_pull_output(),
+            closed_hh: pins.gpio22.into_push_pull_output(),
+        };
+
+        drums.reset();
+
+        //  mutThe rest
+        let mut _start = pins.gpio16.into_push_pull_output();
+        let mut _stop = pins.gpio17.into_push_pull_output();
+        let mut _ctrl = pins.gpio18.into_push_pull_output();
+        let mut _clock = pins.gpio19.into_push_pull_output();
+
 
         let timer = c.device.TIMER;
         let token = rtic_monotonics::create_rp2040_monotonic_token!();
@@ -164,108 +192,72 @@ mod fuckall {
 
         let pwm_slices = hal::pwm::Slices::new(c.device.PWM, &mut resets);
 
-        let mut voice_1_slice = pwm_slices.pwm7;
-        voice_1_slice.set_div_int(1u8); // To set integer part of clock divider
-        voice_1_slice.set_div_frac(0u8); //
-        voice_1_slice.enable();
-        voice_1_slice = voice_1_slice.into_mode::<hal::pwm::FreeRunning>();
-        voice_1_slice.channel_a.output_to(pins.gpio14);
-        voice_1_slice.channel_b.output_to(pins.gpio15);
-        voice_1_slice.channel_b.clr_inverted();
-        voice_1_slice.channel_a.clr_inverted();
-        voice_1_slice.channel_a.set_duty(0x0fff);
-        voice_1_slice.channel_b.set_duty(0x0fff);
 
+        let gate = pins.gpio13.into_push_pull_output();
+        let a_pin = pins.gpio14;
+        let b_pin = pins.gpio15;
 
-        let mut voice_1_gate = pins.gpio13.into_push_pull_output();
-        voice_1_gate.set_low().ok();
+        let pitched_channel = PitchedChannel::new(1, gate, pwm_slices.pwm7, (a_pin, b_pin));
 
-
-        let (uart_sender, uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
+        let (to_uart, uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
         let (midi_sender, midi_receiver) = make_channel!(MidiEvent, MESSAGE_CAPACITY);
 
         watchdog_feeder::spawn().ok();
         usb_handler::spawn(uart_receiver).ok();
-        ping_task::spawn(uart_sender.clone()).ok();
         midi_handler::spawn(midi_receiver).ok();
 
         return (
             Shared { led },
             Local {
                 usb_bus,
-                uart_sender: uart_sender.clone(),
+                uart_sender: to_uart.clone(),
                 uart,
                 watchdog,
                 midi_sender,
-                voice_1_slice,
-                voice_1_gate,
-                clock_out,
                 clock_high: false,
-                button_pin,
+                drums,
+                pitched_channel,
             },
         );
     }
 
-    #[task(local = [], shared=[])]
-    async fn ping_task(_cx: ping_task::Context, mut sender: MessageSender<heapless::String<256>>) {
-        loop {
-            Timer::delay(5000.millis()).await;
-            let mut text: heapless::String<256> = heapless::String::new();
-            writeln!(&mut text, "{:?}: ping", Timer::now().ticks()).ok();
-            sender.send(text).await.ok();
-        }
-    }
-
-
-    #[task(local = [voice_1_slice, voice_1_gate], shared=[])]
+    #[task(local = [pitched_channel, drums], shared=[])]
     async fn midi_handler(c: midi_handler::Context, mut receiver: MessageReceiver<MidiEvent>) {
-        let mut thinger = |pitch: u16, vel: u16| {
-            embedded_hal::PwmPin::set_duty(&mut c.local.voice_1_slice.channel_a, pitch);
-            embedded_hal::PwmPin::set_duty(&mut c.local.voice_1_slice.channel_b, vel);
-        };
-
-        let mut set_gate = |val: bool| {
-            if val {
-                c.local.voice_1_gate.set_high().unwrap()
-            } else {
-                c.local.voice_1_gate.set_low().unwrap()
-            }
-        };
-
-        let _chanell = PitchedChannel::new(
-             0,
-             &mut set_gate,
-             &mut thinger
-            );
         loop {
             match receiver.recv().await {
-                Ok(MidiEvent {channel: 1, message}) => {
-                    match message {
-                        // MidiMessage::NoteOn {..} => {c.local.gate_pin.set_high().ok();}
-                        // MidiMessage::NoteOff {..} => {c.local.gate_pin.set_low().ok();}
+                Ok(MidiEvent {channel, message}) => {
+                    match channel {
+                        PITCHED_CHANELL => match message {
+                            MidiMessage::NoteOn {key, vel} => {
+                                c.local.pitched_channel.note_on(u8::from(key), u8::from(vel))
+                            },
+                            MidiMessage::NoteOff {key, vel: _} => {
+                                c.local.pitched_channel.note_off(u8::from(key))
+                            },
+                            MidiMessage::Aftertouch {key, vel} => {
+                                c.local.pitched_channel.aftertouch(u8::from(key), u8::from(vel))
+                            },
+                            _ => {}
+                        }
+                        DRUM_CHANELL => match message {
+                            MidiMessage::NoteOn {key, vel: _} => {
+                                c.local.drums.set(key, false)
+                            },
+                            MidiMessage::NoteOff {key, vel: _} => {
+                                c.local.drums.set(key, true)
+                            },
+                            _ => {}
+                        }
                         _ => {}
                     }
                 }
-                Ok(_) => {} // Ignore shit on other chanells
                 Err(_) => {} // Errors are for then weak
             }
         }
     }
 
-    #[task(local = [button_pin, clock_out], shared=[], binds=IO_IRQ_BANK0)]
-    fn pin_task(cx: pin_task::Context) {
-        if cx.local.button_pin.interrupt_status(EdgeLow) {
-            cx.local.clock_out.set_low().ok();
-            cx.local.button_pin.clear_interrupt(EdgeLow);
-        }
-        if cx.local.button_pin.interrupt_status(EdgeHigh) {
-            cx.local.clock_out.set_high().ok();
-            cx.local.button_pin.clear_interrupt(EdgeHigh);
-        }
-    }
-
-    #[task(local = [clock_high, uart_sender, midi_sender, uart,], shared=[], binds=UART0_IRQ)]
-    fn uart(c: uart::Context) {
+    #[task(local = [clock_high, uart_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
+    fn uart(mut c: uart::Context) {
         let mut bob = [0u8; 32];
         if !c.local.uart.uart_is_readable() {
             let _ = c.local.uart_sender.try_send(heapless::String::from("Shit aint readable"));
@@ -283,14 +275,6 @@ mod fuckall {
                             // Ignoring Clocks and such for now
                             match message {
                                 midly::live::SystemRealtime::TimingClock => {
-                                    // if *c.local.clock_high {
-                                    //     c.local.clock_out.set_low().ok();
-                                    //     *c.local.clock_high = false;
-                                    // } else {
-                                    //     c.local.clock_out.set_high().ok();
-                                    //     *c.local.clock_high = true;
-                                    // }
-                                    // clock_ticker::spawn().ok();
                                 }
                                 _ => {}
                             }
@@ -304,8 +288,9 @@ mod fuckall {
                             i+=3;
                         }
                         Ok(LiveEvent::Midi {channel, message}) => {
+                            c.shared.led.lock(|l| {l.set_high().unwrap()});
                             let mut text: heapless::String<256> = heapless::String::new();
-                            write!(&mut text, "{:?}\n", message).ok();
+                            write!(&mut text, "C:{} {:?}\n", u8::from(channel)+1 ,message).ok();
                             c.local.uart_sender.try_send(text).ok();
                             c.local.midi_sender.try_send(MidiEvent {channel: u8::from(channel) + 1, message}).ok();
                             i+=3;
@@ -335,13 +320,6 @@ mod fuckall {
         };
     }
 
-    //#[task(priority = 2, shared = [], local = [clock_out])]
-    //async fn clock_ticker(c: clock_ticker::Context) {
-    //    c.local.clock_out.set_high().ok();
-    //    Timer::delay(100.micros()).await;
-    //    c.local.clock_out.set_low().ok();
-    //}
-
     #[task(priority = 0, shared = [], local = [watchdog])]
     async fn watchdog_feeder(c: watchdog_feeder::Context) {
         loop {
@@ -355,7 +333,7 @@ mod fuckall {
         shared = [led],
         local = [usb_bus],
     )]
-    async fn usb_handler(c: usb_handler::Context, mut receiver: MessageReceiver<heapless::String<256>>) {
+    async fn usb_handler(mut c: usb_handler::Context, mut receiver: MessageReceiver<heapless::String<256>>) {
         let mut serial = usbd_serial::SerialPort::new(&c.local.usb_bus);
         let mut usb_dev = UsbDeviceBuilder::new(&c.local.usb_bus, UsbVidPid(0x16c0, 0x27dd))
             .manufacturer("Things")
@@ -364,10 +342,23 @@ mod fuckall {
             .device_class(2)
             .build();
 
-        Timer::delay(1500.millis()).await;
 
-        let clear: heapless::String<256> = heapless::String::from("Connected");
-        serial.write(clear.as_bytes()).ok();
+        c.shared.led.lock(|l| {l.set_high().ok()});
+        while !usb_dev.poll(&mut [&mut serial]) {
+            Timer::delay(2.millis()).await;
+        };
+        c.shared.led.lock(|l| {l.set_low().ok()});
+
+        let clear: heapless::String<256> = heapless::String::from("Connected\n");
+        let mut sent = false;
+        while !sent {
+            match serial.write(clear.as_bytes()) {
+                Ok(_) => sent=true,
+                Err(_) => ()
+            }
+            usb_dev.poll(&mut [&mut serial]);
+            Timer::delay(5.millis()).await;
+        }
 
         loop {
             match receiver.try_recv() {
