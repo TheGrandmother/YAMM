@@ -1,14 +1,13 @@
-use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::digital::v2::{InputPin, OutputPin, PinState};
+use hal::gpio::bank0::*;
 use hal::gpio::PinId;
+use hal::gpio::{self};
+use hal::pwm;
 use midly::num::u7;
-use rp2040_hal as hal;
-use rp2040_hal::pwm;
-use rp2040_hal::gpio::{self, PinState};
-use rp2040_hal::gpio::pin::bank0::*;
-
+use rp_pico::hal;
 
 /*
- 
+
 GATE_A 5
 GATE_B 6
 GATE_C 7
@@ -25,37 +24,63 @@ START 13
 CLOCK 19
 STOP  18
 
-PWM_A 14
-PWM_B 15
-PWM_C 17
-PWM_D 16
 
 CONF 2,3,4
 
 */
 
+pub type OpenHH = gpio::Pin<Gpio9, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Clap = gpio::Pin<Gpio10, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Snare = gpio::Pin<Gpio11, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type BD = gpio::Pin<Gpio12, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type FX = gpio::Pin<Gpio20, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Accent = gpio::Pin<Gpio21, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type ClosedHH = gpio::Pin<Gpio22, gpio::FunctionSioOutput, gpio::PullDown>;
 
-pub type OpenHH = gpio::Pin<Gpio9, gpio::PushPullOutput>;
-pub type Clap = gpio::Pin<Gpio10, gpio::PushPullOutput>;
-pub type Snare = gpio::Pin<Gpio11, gpio::PushPullOutput>;
-pub type BD = gpio::Pin<Gpio12, gpio::PushPullOutput>;
-pub type FX = gpio::Pin<Gpio20, gpio::PushPullOutput>;
-pub type Accent = gpio::Pin<Gpio21, gpio::PushPullOutput>;
-pub type ClosedHH = gpio::Pin<Gpio22, gpio::PushPullOutput>;
+pub type Start = gpio::Pin<Gpio16, gpio::FunctionSioOutput, gpio::PullDown>; //wack
+pub type Ctrl = gpio::Pin<Gpio17, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Stop = gpio::Pin<Gpio18, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Clock = gpio::Pin<Gpio19, gpio::FunctionSioOutput, gpio::PullDown>;
 
-pub type Start = gpio::Pin<Gpio16, gpio::PushPullOutput>; //wack
-pub type Ctrl = gpio::Pin<Gpio17, gpio::PushPullOutput>; 
-pub type Stop = gpio::Pin<Gpio18, gpio::PushPullOutput>;
-pub type Clock = gpio::Pin<Gpio19, gpio::PushPullOutput>;
+pub type ConfA = gpio::Pin<Gpio2, gpio::SioInput, gpio::PullDown>;
+pub type ConfB = gpio::Pin<Gpio2, gpio::SioInput, gpio::PullDown>;
+pub type ConfC = gpio::Pin<Gpio2, gpio::SioInput, gpio::PullDown>;
 
+pub type GateA = gpio::Pin<Gpio5, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type GateB = gpio::Pin<Gpio6, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type GateC = gpio::Pin<Gpio7, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type GateD = gpio::Pin<Gpio8, gpio::FunctionSioOutput, gpio::PullDown>;
 
+pub enum PwmGate {
+    GateA(gpio::Pin<Gpio5, gpio::FunctionSioOutput, gpio::PullDown>),
+    GateB(gpio::Pin<Gpio6, gpio::FunctionSioOutput, gpio::PullDown>),
+    GateC(gpio::Pin<Gpio7, gpio::FunctionSioOutput, gpio::PullDown>),
+    GateD(gpio::Pin<Gpio8, gpio::FunctionSioOutput, gpio::PullDown>),
+}
+impl PwmGate {
+    pub(crate) fn set_state(&mut self, state: bool) -> Option<()> {
+        match self {
+            PwmGate::GateA(x) => x.set_state(PinState::from(state)).ok(),
+            PwmGate::GateB(x) => x.set_state(PinState::from(state)).ok(),
+            PwmGate::GateC(x) => x.set_state(PinState::from(state)).ok(),
+            PwmGate::GateD(x) => x.set_state(PinState::from(state)).ok(),
+        }
+    }
+}
 
-pub type GateA = gpio::Pin<Gpio13, gpio::PushPullOutput>;
+// PWM_A and PWM_B Map to PWM Channel 7A and 7B
+// PWM_C and PWM_D Map to PWM Channel 0A and 0B
+// PWM_A 14
+// PWM_B 15
+// PWM_C 17
+// PWM_D 16
 
-pub type VoiceSlice = hal::pwm::Slice<hal::pwm::Pwm7, pwm::FreeRunning>;
-pub type VoicePwmPins = (hal::gpio::Pin<Gpio14, <Gpio14 as PinId>::Reset>, hal::gpio::Pin<Gpio15, <Gpio15 as PinId>::Reset>);
-
-
+pub type VoiceSliceAB = hal::pwm::Slice<hal::pwm::Pwm7, pwm::FreeRunning>;
+pub type VoiceSliceCD = hal::pwm::Slice<hal::pwm::Pwm0, pwm::FreeRunning>;
+// pub type PwmA = hal::gpio::Pin<Gpio14, <Gpio14 as PinId>::Reset>;
+// pub type PwmB = hal::gpio::Pin<Gpio15, <Gpio15 as PinId>::Reset>;
+// pub type PwmC = hal::gpio::Pin<Gpio17, <Gpio17 as PinId>::Reset>;
+// pub type PwmD = hal::gpio::Pin<Gpio16, <Gpio16 as PinId>::Reset>;
 
 pub struct Drums {
     pub kick: BD,
@@ -69,13 +94,13 @@ pub struct Drums {
 
 impl Drums {
     pub fn reset(&mut self) {
-        self.open_hh.set_high().unwrap();
-        self.clap.set_high().unwrap();
-        self.snare.set_high().unwrap();
-        self.kick.set_high().unwrap();
-        self.fx.set_high().unwrap();
-        self.accent.set_high().unwrap();
-        self.closed_hh.set_high().unwrap();
+        self.open_hh.set_low().unwrap();
+        self.clap.set_low().unwrap();
+        self.snare.set_low().unwrap();
+        self.kick.set_low().unwrap();
+        self.fx.set_low().unwrap();
+        self.accent.set_low().unwrap();
+        self.closed_hh.set_low().unwrap();
     }
 
     pub fn set(&mut self, key: u7, state: bool) {
@@ -87,8 +112,35 @@ impl Drums {
             40 => self.closed_hh.set_state(PinState::from(state)).unwrap(),
             41 => self.fx.set_state(PinState::from(state)).unwrap(),
             42 => self.accent.set_state(PinState::from(state)).unwrap(),
-            _ => ()
+            _ => (),
         }
+    }
+}
 
+pub enum BusSignals {
+    START,
+    STOP,
+    CLOCK,
+}
+
+pub struct Bus {
+    pub start: Start,
+    pub stop: Stop,
+    pub clock: Clock,
+}
+
+impl Bus {
+    pub fn reset(&mut self) {
+        self.start.set_low().unwrap();
+        self.clock.set_low().unwrap();
+        self.stop.set_low().unwrap();
+    }
+
+    pub fn set(&mut self, signal: BusSignals, state: bool) {
+        match signal {
+            BusSignals::START => self.start.set_state(PinState::from(state)).unwrap(),
+            BusSignals::STOP => self.stop.set_state(PinState::from(state)).unwrap(),
+            BusSignals::CLOCK => self.clock.set_state(PinState::from(state)).unwrap(),
+        }
     }
 }

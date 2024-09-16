@@ -1,4 +1,3 @@
-#
 # Cargo Configuration for the https://github.com/rp-rs/rp-hal.git repository.
 #
 # Copyright (c) The RP-RS Developers, 2021
@@ -14,7 +13,7 @@
 target = "thumbv6m-none-eabi"
 
 [toolchain]
-channel = "nightly"
+channel = "stable"
 
 # Target specific options
 [target.thumbv6m-none-eabi]
@@ -32,7 +31,7 @@ channel = "nightly"
 rustflags = [
     "-C", "link-arg=--nmagic",
     "-C", "link-arg=-Tlink.x",
-    "-C", "inline-threshold=5",
+#    "-C", "inline-threshold=5",
     "-C", "no-vectorize-loops",
 ]
 
