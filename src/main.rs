@@ -43,6 +43,7 @@ mod midi_master {
     use hal::gpio;
     use hal::pwm;
 
+    use crate::pitched_channel::GpvChannel;
     use crate::Mono;
 
     // use crate::pitched_channel;
@@ -88,7 +89,7 @@ mod midi_master {
         clock_high: bool,
         drums: Drums,
         bus: Bus,
-        //     pitched_channel: GpvChannel,
+        pitched_channel: GpvChannel,
     }
 
     #[shared]
@@ -194,7 +195,7 @@ mod midi_master {
         //     .unwrap();
         // uart.enable_rx_interrupt();
 
-        // let pwm_slices = hal::pwm::Slices::new(c.device.PWM, &mut resets);
+        let pwm_slices = hal::pwm::Slices::new(c.device.PWM, &mut resets);
 
         // let gate = pins.gpio5.into_push_pull_output();
         // let a_pin = pins.gpio14.into_function::<gpio::FunctionPwm>();
@@ -203,7 +204,7 @@ mod midi_master {
         let pitched_channel = GpvChannel::new(
             1,
             PwmGate::GateA(pins.gpio5.into_push_pull_output()),
-            pins.gpio14.into_function::<gpio::FunctionPwm>(),
+            pwm_slices.pwm7,
             (
                 pins.gpio14.into_function::<gpio::FunctionPwm>(),
                 pins.gpio15.into_function::<gpio::FunctionPwm>(),
@@ -228,7 +229,7 @@ mod midi_master {
                 midi_sender,
                 clock_high: false,
                 drums,
-                //        pitched_channel,
+                pitched_channel,
                 bus,
             },
         );
@@ -293,7 +294,7 @@ mod midi_master {
         }
     }
 
-    #[task(local = [drums, bus], shared=[])]
+    #[task(local = [drums, bus, pitched_channel], shared=[])]
     async fn midi_handler(c: midi_handler::Context, mut receiver: MessageReceiver<LiveEvent<'_>>) {
         let mut clock_pulse_count: u16 = 0;
         let ppq = 24;
@@ -301,20 +302,20 @@ mod midi_master {
         loop {
             match receiver.recv().await {
                 Ok(LiveEvent::Midi { channel, message }) => match channel {
-                    // PITCHED_CHANELL => match message {
-                    //     MidiMessage::NoteOn { key, vel } => c
-                    //         .local
-                    //         .pitched_channel
-                    //         .note_on(u8::from(key), u8::from(vel)),
-                    //     MidiMessage::NoteOff { key, vel: _ } => {
-                    //         c.local.pitched_channel.note_off(u8::from(key))
-                    //     }
-                    //     MidiMessage::Aftertouch { key, vel } => c
-                    //         .local
-                    //         .pitched_channel
-                    //         .aftertouch(u8::from(key), u8::from(vel)),
-                    //     _ => {}
-                    // },
+                    PITCHED_CHANELL => match message {
+                        MidiMessage::NoteOn { key, vel } => c
+                            .local
+                            .pitched_channel
+                            .note_on(u8::from(key), u8::from(vel)),
+                        MidiMessage::NoteOff { key, vel: _ } => {
+                            c.local.pitched_channel.note_off(u8::from(key))
+                        }
+                        MidiMessage::Aftertouch { key, vel } => c
+                            .local
+                            .pitched_channel
+                            .aftertouch(u8::from(key), u8::from(vel)),
+                        _ => {}
+                    },
                     DRUM_CHANELL => match message {
                         MidiMessage::NoteOn { key, vel: _ } => c.local.drums.set(key, true),
                         MidiMessage::NoteOff { key, vel: _ } => c.local.drums.set(key, false),

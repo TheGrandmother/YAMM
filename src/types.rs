@@ -1,10 +1,18 @@
 use embedded_hal::digital::v2::{InputPin, OutputPin, PinState};
+use embedded_hal::PwmPin;
 use hal::gpio::bank0::*;
 use hal::gpio::PinId;
 use hal::gpio::{self};
 use hal::pwm;
+use hal::pwm::SliceId;
 use midly::num::u7;
 use rp_pico::hal;
+use rp_pico::hal::gpio::AnyPin;
+use rp_pico::hal::gpio::Pin;
+use rp_pico::hal::pwm::AnySlice;
+use rp_pico::hal::pwm::Channel;
+use rp_pico::hal::pwm::Slices;
+use rp_pico::hal::pwm::ValidPwmOutputPin;
 
 /*
 
@@ -142,5 +150,50 @@ impl Bus {
             BusSignals::STOP => self.stop.set_state(PinState::from(state)).unwrap(),
             BusSignals::CLOCK => self.clock.set_state(PinState::from(state)).unwrap(),
         }
+    }
+}
+
+pub struct CvPair<S, const TOP: u16 = 0xA00>
+where
+    S: AnySlice,
+{
+    slice: hal::pwm::Slice<S::Id, pwm::FreeRunning>,
+    max_voltage: f32,
+    max_duty: u16,
+}
+
+impl<S, const TOP: u16> CvPair<S, TOP>
+where
+    S: AnySlice,
+{
+    fn new<PA, PB>(
+        mut slice: hal::pwm::Slice<S::Id, pwm::FreeRunning>,
+        pin_a: PA,
+        pin_b: PB,
+    ) -> Self
+    where
+        PA: AnyPin,
+        PA::Id: ValidPwmOutputPin<S::Id, pwm::A>,
+        PB: AnyPin,
+        PB::Id: ValidPwmOutputPin<S::Id, pwm::B>,
+    {
+        slice.set_div_int(1u8);
+        slice.set_div_frac(0u8);
+        slice.set_top(TOP);
+        slice.enable();
+        slice = slice.into_mode::<hal::pwm::FreeRunning>();
+        slice.channel_a.output_to(pin_a);
+        slice.channel_b.output_to(pin_b);
+        slice.channel_b.set_inverted();
+        slice.channel_a.set_inverted();
+        slice.channel_a.set_duty(0x0);
+        slice.channel_b.set_duty(0x0);
+        let max_duty = slice.channel_a.get_max_duty();
+
+        return Self {
+            max_voltage: 5.00,
+            max_duty,
+            slice,
+        };
     }
 }

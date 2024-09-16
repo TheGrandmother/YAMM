@@ -113,7 +113,6 @@ impl GpvChannel {
     - 1V = C1(1)= MIDI note 24 = 32.703 Hz
     - 3V = C3 = MIDI note 48 = 130.81 Hz
      */
-
     fn note_to_duty(&self, key: u8) -> u16 {
         let duty_per_voltage = self.max_duty as f32 / self.max_voltage;
         let volt = (key as f32 - self.offset) / 12.0;
