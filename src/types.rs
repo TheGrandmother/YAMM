@@ -9,10 +9,10 @@ use midly::num::u7;
 use rp_pico::hal;
 use rp_pico::hal::gpio::AnyPin;
 use rp_pico::hal::gpio::Pin;
-use rp_pico::hal::pwm::AnySlice;
-use rp_pico::hal::pwm::Channel;
-use rp_pico::hal::pwm::Slices;
 use rp_pico::hal::pwm::ValidPwmOutputPin;
+use rp_pico::hal::pwm::{AnySlice, Slice};
+use rp_pico::hal::pwm::{Channel, DynChannelId};
+use rp_pico::hal::pwm::{DynSliceId, Slices};
 
 /*
 
@@ -45,8 +45,10 @@ pub type FX = gpio::Pin<Gpio20, gpio::FunctionSioOutput, gpio::PullDown>;
 pub type Accent = gpio::Pin<Gpio21, gpio::FunctionSioOutput, gpio::PullDown>;
 pub type ClosedHH = gpio::Pin<Gpio22, gpio::FunctionSioOutput, gpio::PullDown>;
 
-pub type Start = gpio::Pin<Gpio16, gpio::FunctionSioOutput, gpio::PullDown>; //wack
-pub type Ctrl = gpio::Pin<Gpio17, gpio::FunctionSioOutput, gpio::PullDown>;
+// not used
+pub type Start = gpio::Pin<Gpio13, gpio::FunctionSioOutput, gpio::PullDown>;
+
+// pub type Ctrl = gpio::Pin<Gpio17, gpio::FunctionSioOutput, gpio::PullDown>;
 pub type Stop = gpio::Pin<Gpio18, gpio::FunctionSioOutput, gpio::PullDown>;
 pub type Clock = gpio::Pin<Gpio19, gpio::FunctionSioOutput, gpio::PullDown>;
 
@@ -82,13 +84,6 @@ impl PwmGate {
 // PWM_B 15
 // PWM_C 17
 // PWM_D 16
-
-pub type VoiceSliceAB = hal::pwm::Slice<hal::pwm::Pwm7, pwm::FreeRunning>;
-pub type VoiceSliceCD = hal::pwm::Slice<hal::pwm::Pwm0, pwm::FreeRunning>;
-// pub type PwmA = hal::gpio::Pin<Gpio14, <Gpio14 as PinId>::Reset>;
-// pub type PwmB = hal::gpio::Pin<Gpio15, <Gpio15 as PinId>::Reset>;
-// pub type PwmC = hal::gpio::Pin<Gpio17, <Gpio17 as PinId>::Reset>;
-// pub type PwmD = hal::gpio::Pin<Gpio16, <Gpio16 as PinId>::Reset>;
 
 pub struct Drums {
     pub kick: BD,
@@ -153,7 +148,9 @@ impl Bus {
     }
 }
 
-pub struct CvPair<S, const TOP: u16 = 0xA00>
+const PWM_TOP: u16 = 0xA00;
+
+pub struct CvPair<S>
 where
     S: AnySlice,
 {
@@ -162,11 +159,18 @@ where
     max_duty: u16,
 }
 
-impl<S, const TOP: u16> CvPair<S, TOP>
+pub type SliceAB = hal::pwm::Slice<hal::pwm::Pwm7, pwm::FreeRunning>;
+pub type SliceCD = hal::pwm::Slice<hal::pwm::Pwm0, pwm::FreeRunning>;
+pub type PwmA = hal::gpio::Pin<Gpio14, gpio::FunctionPwm, gpio::PullDown>;
+pub type PwmB = hal::gpio::Pin<Gpio15, gpio::FunctionPwm, gpio::PullDown>;
+pub type PwmC = hal::gpio::Pin<Gpio17, gpio::FunctionPwm, gpio::PullDown>;
+pub type PwmD = hal::gpio::Pin<Gpio16, gpio::FunctionPwm, gpio::PullDown>;
+
+impl<S> CvPair<S>
 where
     S: AnySlice,
 {
-    fn new<PA, PB>(
+    pub fn new<PA, PB>(
         mut slice: hal::pwm::Slice<S::Id, pwm::FreeRunning>,
         pin_a: PA,
         pin_b: PB,
@@ -179,7 +183,7 @@ where
     {
         slice.set_div_int(1u8);
         slice.set_div_frac(0u8);
-        slice.set_top(TOP);
+        slice.set_top(PWM_TOP);
         slice.enable();
         slice = slice.into_mode::<hal::pwm::FreeRunning>();
         slice.channel_a.output_to(pin_a);
@@ -195,5 +199,27 @@ where
             max_duty,
             slice,
         };
+    }
+
+    fn set(&mut self, ch: DynChannelId, voltage: f32) {
+        let duty: u16;
+        if voltage > 5.0 {
+            duty = 1
+        } else if voltage < 0.0 {
+            duty = 0
+        } else {
+            duty = (self.max_duty as f32 * voltage / 5.0) as u16;
+        }
+        match ch {
+            DynChannelId::A => self.slice.channel_a.set_duty(duty),
+            DynChannelId::B => self.slice.channel_b.set_duty(duty),
+        }
+    }
+
+    pub fn set_a(&mut self, voltage: f32) {
+        self.set(DynChannelId::A, voltage)
+    }
+    pub fn set_b(&mut self, voltage: f32) {
+        self.set(DynChannelId::B, voltage)
     }
 }

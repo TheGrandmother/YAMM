@@ -43,6 +43,7 @@ mod midi_master {
     use hal::gpio;
     use hal::pwm;
 
+    use crate::pitched_channel::FourVoiceChannel;
     use crate::pitched_channel::GpvChannel;
     use crate::Mono;
 
@@ -89,7 +90,7 @@ mod midi_master {
         clock_high: bool,
         drums: Drums,
         bus: Bus,
-        pitched_channel: GpvChannel,
+        pitched_channel: FourVoiceChannel,
     }
 
     #[shared]
@@ -157,15 +158,52 @@ mod midi_master {
 
         drums.reset();
 
-        watchdog.start(fugit::ExtU32::micros(10_000));
-
         let mut bus = Bus {
-            start: pins.gpio16.into_push_pull_output(),
+            start: pins.gpio13.into_push_pull_output(),
             stop: pins.gpio18.into_push_pull_output(),
             clock: pins.gpio19.into_push_pull_output(),
         };
 
         bus.reset();
+        let pwm_slices = hal::pwm::Slices::new(c.device.PWM, &mut resets);
+
+        /*
+
+                    pairs: (
+                        CvPair::new(
+                            slices.pwm7,
+                            pins.gpio14.into_function::<gpio::FunctionPwm>(),
+                            pins.gpio15.into_function::<gpio::FunctionPwm>(),
+                        ),
+                        CvPair::new(
+                            slices.pwm0,
+                            pins.gpio16.into_function::<gpio::FunctionPwm>(),
+                            pins.gpio17.into_function::<gpio::FunctionPwm>(),
+                        ),
+                    ),
+                    notes: [None, None, None, None],
+                    gates: [
+                        PwmGate::GateA(pins.gpio5.into_push_pull_output()),
+                        PwmGate::GateB(pins.gpio6.into_push_pull_output()),
+                        PwmGate::GateC(pins.gpio7.into_push_pull_output()),
+                        PwmGate::GateD(pins.gpio8.into_push_pull_output()),
+                    ],
+
+
+        */
+
+        let pitched_channel = FourVoiceChannel::new(
+            pwm_slices.pwm7,
+            pwm_slices.pwm0,
+            pins.gpio14.into_function::<gpio::FunctionPwm>(),
+            pins.gpio15.into_function::<gpio::FunctionPwm>(),
+            pins.gpio17.into_function::<gpio::FunctionPwm>(),
+            pins.gpio16.into_function::<gpio::FunctionPwm>(),
+            pins.gpio5.into_push_pull_output(),
+            pins.gpio6.into_push_pull_output(),
+            pins.gpio7.into_push_pull_output(),
+            pins.gpio8.into_push_pull_output(),
+        );
 
         // let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
         //     c.device.USBCTRL_REGS,
@@ -195,25 +233,24 @@ mod midi_master {
         //     .unwrap();
         // uart.enable_rx_interrupt();
 
-        let pwm_slices = hal::pwm::Slices::new(c.device.PWM, &mut resets);
-
         // let gate = pins.gpio5.into_push_pull_output();
         // let a_pin = pins.gpio14.into_function::<gpio::FunctionPwm>();
         // let b_pin = ;
 
-        let pitched_channel = GpvChannel::new(
-            1,
-            PwmGate::GateA(pins.gpio5.into_push_pull_output()),
-            pwm_slices.pwm7,
-            (
-                pins.gpio14.into_function::<gpio::FunctionPwm>(),
-                pins.gpio15.into_function::<gpio::FunctionPwm>(),
-            ),
-        );
+        // let pitched_channel = GpvChannel::new(
+        //     1,
+        //     PwmGate::GateA(pins.gpio5.into_push_pull_output()),
+        //     pwm_slices.pwm7,
+        //     (
+        //         pins.gpio14.into_function::<gpio::FunctionPwm>(),
+        //         pins.gpio15.into_function::<gpio::FunctionPwm>(),
+        //     ),
+        // );
 
         // let (uart_sender, uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
         let (midi_sender, midi_receiver) = make_channel!(LiveEvent, MESSAGE_CAPACITY);
 
+        watchdog.start(fugit::ExtU32::micros(10_000));
         watchdog_feeder::spawn().ok();
         // usb_handler::spawn(uart_receiver).ok();
         midi_handler::spawn(midi_receiver).ok();
@@ -249,18 +286,30 @@ mod midi_master {
         loop {
             if test_step > 42 {
                 test_step = 36;
-                on = !on;
                 octave = (octave + 1) % 6;
                 let note = octave * 12 + 12;
-                midi_sender
-                    .try_send(LiveEvent::Midi {
-                        channel: PITCHED_CHANELL,
-                        message: MidiMessage::NoteOn {
-                            key: midly::num::u7::from(note),
-                            vel: midly::num::u7::from(0),
-                        },
-                    })
-                    .ok();
+                if on {
+                    midi_sender
+                        .try_send(LiveEvent::Midi {
+                            channel: PITCHED_CHANELL,
+                            message: MidiMessage::NoteOn {
+                                key: midly::num::u7::from(note),
+                                vel: midly::num::u7::from(0),
+                            },
+                        })
+                        .ok();
+                } else {
+                    midi_sender
+                        .try_send(LiveEvent::Midi {
+                            channel: PITCHED_CHANELL,
+                            message: MidiMessage::NoteOff {
+                                key: midly::num::u7::from(note),
+                                vel: midly::num::u7::from(0),
+                            },
+                        })
+                        .ok();
+                }
+                on = !on;
             }
             midi_sender
                 .try_send(LiveEvent::Realtime(
@@ -303,17 +352,16 @@ mod midi_master {
             match receiver.recv().await {
                 Ok(LiveEvent::Midi { channel, message }) => match channel {
                     PITCHED_CHANELL => match message {
-                        MidiMessage::NoteOn { key, vel } => c
-                            .local
-                            .pitched_channel
-                            .note_on(u8::from(key), u8::from(vel)),
+                        MidiMessage::NoteOn { key, vel: _ } => {
+                            c.local.pitched_channel.note_on(u8::from(key))
+                        }
                         MidiMessage::NoteOff { key, vel: _ } => {
                             c.local.pitched_channel.note_off(u8::from(key))
                         }
-                        MidiMessage::Aftertouch { key, vel } => c
-                            .local
-                            .pitched_channel
-                            .aftertouch(u8::from(key), u8::from(vel)),
+                        // MidiMessage::Aftertouch { key, vel } => c
+                        //     .local
+                        //     .pitched_channel
+                        //     .aftertouch(u8::from(key), u8::from(vel)),
                         _ => {}
                     },
                     DRUM_CHANELL => match message {
