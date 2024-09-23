@@ -94,7 +94,7 @@ impl FourVoiceChannel {
         };
     }
 
-    fn set_channel(&mut self, channel: usize, note: u8) {
+    fn set_channel_note(&mut self, channel: usize, note: u8) {
         let voltage = note_to_voltage(note - self.offset);
         match channel {
             0 => self.pairs.0.set_a(voltage),
@@ -109,13 +109,16 @@ impl FourVoiceChannel {
         self.count += 1;
         let channel = find_oldest_channel::<4>(self.notes);
         self.notes[channel] = Some((self.count, key));
-        self.set_channel(channel, key);
+        self.set_channel_note(channel, key);
         self.gates[channel].set_state(true);
     }
 
     pub fn note_off(&mut self, key: u8) {
         match find_by_note::<4>(self.notes, key) {
-            Some(channel) => self.gates[channel].set_state(false).unwrap(),
+            Some(channel) => {
+                self.notes[channel] = None;
+                self.gates[channel].set_state(false).unwrap()
+            }
             None => {}
         }
     }

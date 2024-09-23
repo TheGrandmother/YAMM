@@ -16,6 +16,8 @@ rp2040_timer_monotonic!(Mono);
 #[rtic::app(device = rp_pico::hal::pac, dispatchers = [SW0_IRQ, SW1_IRQ, SW2_IRQ])]
 mod midi_master {
 
+    use ::nb::Error;
+    use embedded_hal::can::nb;
     use embedded_hal::digital::v2::{InputPin, OutputPin};
     use fugit::Duration;
     use rp_pico::hal;
@@ -55,14 +57,14 @@ mod midi_master {
     const DRUM_CHANELL: midly::num::u4 = midly::num::u4::new(2);
     type MessageSender<T> = Sender<'static, T, MESSAGE_CAPACITY>;
     type MessageReceiver<T> = Receiver<'static, T, MESSAGE_CAPACITY>;
-    // type UartType = hal::uart::UartPeripheral<
-    //     hal::uart::Enabled,
-    //     hal::pac::UART0,
-    //     (
-    //         Pin<gpio::bank0::Gpio0, gpio::FunctionUart, gpio::PullDown>,
-    //         Pin<gpio::bank0::Gpio1, gpio::FunctionUart, gpio::PullDown>,
-    //     ),
-    // >;
+    type UartType = hal::uart::UartPeripheral<
+        hal::uart::Enabled,
+        hal::pac::UART0,
+        (
+            Pin<gpio::bank0::Gpio0, gpio::FunctionUart, gpio::PullDown>,
+            Pin<gpio::bank0::Gpio1, gpio::FunctionUart, gpio::PullDown>,
+        ),
+    >;
 
     fn blink(
         led: &mut Pin<Gpio25, FunctionSio<SioOutput>, PullDown>,
@@ -82,9 +84,9 @@ mod midi_master {
     #[local]
     struct Local {
         //     usb_bus: UsbBusAllocator<hal::usb::UsbBus>,
-        //    uart_sender: MessageSender<heapless::String<256>>,
+        uart_sender: MessageSender<heapless::String<256>>,
         watchdog: hal::Watchdog,
-        //    uart: UartType,
+        uart: UartType,
         midi_sender: MessageSender<LiveEvent<'static>>,
         clock_high: bool,
         drums: Drums,
@@ -219,24 +221,24 @@ mod midi_master {
         // ));
 
         // Set up UART on GP0 and GP1 (Pico pins 1 and 2)
-        // let uart_pins = (
-        //     pins.gpio0.into_function::<gpio::FunctionUart>(),
-        //     pins.gpio1.into_function::<gpio::FunctionUart>(),
-        // );
+        let uart_pins = (
+            pins.gpio0.into_function::<gpio::FunctionUart>(),
+            pins.gpio1.into_function::<gpio::FunctionUart>(),
+        );
 
-        // // Need to perform clock init before using UART or it will freeze.
-        // let mut uart = hal::uart::UartPeripheral::new(c.device.UART0, uart_pins, &mut resets)
-        //     .enable(
-        //         hal::uart::UartConfig::new(
-        //             31250.Hz(),
-        //             hal::uart::DataBits::Eight,
-        //             None,
-        //             hal::uart::StopBits::One,
-        //         ),
-        //         hal::Clock::freq(&clocks.peripheral_clock),
-        //     )
-        //     .unwrap();
-        // uart.enable_rx_interrupt();
+        // Need to perform clock init before using UART or it will freeze.
+        let mut uart = hal::uart::UartPeripheral::new(c.device.UART0, uart_pins, &mut resets)
+            .enable(
+                hal::uart::UartConfig::new(
+                    31250.Hz(),
+                    hal::uart::DataBits::Eight,
+                    None,
+                    hal::uart::StopBits::One,
+                ),
+                hal::Clock::freq(&clocks.peripheral_clock),
+            )
+            .unwrap();
+        uart.enable_rx_interrupt();
 
         // let gate = pins.gpio5.into_push_pull_output();
         // let a_pin = pins.gpio14.into_function::<gpio::FunctionPwm>();
@@ -252,21 +254,21 @@ mod midi_master {
         //     ),
         // );
 
-        // let (uart_sender, uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
+        let (uart_sender, uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
         let (midi_sender, midi_receiver) = make_channel!(LiveEvent, MESSAGE_CAPACITY);
 
         watchdog.start(fugit::ExtU32::micros(10_000));
         watchdog_feeder::spawn().ok();
         // usb_handler::spawn(uart_receiver).ok();
         midi_handler::spawn(midi_receiver).ok();
-        test_suite::spawn(midi_sender.clone() /*, uart_sender.clone()*/).ok();
+        // test_suite::spawn(midi_sender.clone() /*, uart_sender.clone()*/).ok();
 
         return (
             Shared { led },
             Local {
                 //        usb_bus,
-                //      uart_sender: uart_sender.clone(),
-                //      uart,
+                uart_sender: uart_sender.clone(),
+                uart,
                 watchdog,
                 midi_sender,
                 clock_high: false,
@@ -352,7 +354,7 @@ mod midi_master {
         let mut clock_pulse_count: u16 = 0;
         let ppq = 24;
         let subdiv = match c.local.divide_clock {
-            true => ppq / 4,
+            true => ppq - 1,
             false => 2,
         }; // per quarter
         loop {
@@ -365,10 +367,6 @@ mod midi_master {
                         MidiMessage::NoteOff { key, vel: _ } => {
                             c.local.pitched_channel.note_off(u8::from(key))
                         }
-                        // MidiMessage::Aftertouch { key, vel } => c
-                        //     .local
-                        //     .pitched_channel
-                        //     .aftertouch(u8::from(key), u8::from(vel)),
                         _ => {}
                     },
                     DRUM_CHANELL => match message {
@@ -383,11 +381,16 @@ mod midi_master {
                         c.local
                             .bus
                             .set(BusSignals::CLOCK, (clock_pulse_count % (subdiv)) == 0);
-                        c.local.bus.set(BusSignals::STOP, false);
-                        c.local.bus.set(BusSignals::START, false);
+                        if (clock_pulse_count % (subdiv)) == 0 {
+                            c.local.bus.set(BusSignals::STOP, false);
+                            c.local.bus.set(BusSignals::START, false);
+                        }
                         clock_pulse_count = (clock_pulse_count + 1) % ppq;
                     }
-                    midly::live::SystemRealtime::Stop => c.local.bus.set(BusSignals::STOP, true),
+                    midly::live::SystemRealtime::Stop => {
+                        c.local.bus.set(BusSignals::CLOCK, false);
+                        c.local.bus.set(BusSignals::STOP, true)
+                    }
                     midly::live::SystemRealtime::Start => c.local.bus.set(BusSignals::START, true),
                     _ => {}
                 },
@@ -397,84 +400,84 @@ mod midi_master {
         }
     }
 
-    // #[task(local = [clock_high, uart_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
-    // fn uart(mut c: uart::Context) {
-    //     let mut bob = [0u8; 32];
-    //     if !c.local.uart.uart_is_readable() {
-    //         let _ = c
-    //             .local
-    //             .uart_sender
-    //             .try_send(heapless::String::from("Shit aint readable"));
-    //         return;
-    //     }
-    //     match c.local.uart.read_raw(&mut bob) {
-    //         Ok(bytes) => {
-    //             if bytes > 0 {
-    //                 c.local.uart.write_raw(&bob).ok();
-    //             }
-    //             let mut i = 0;
-    //             while i < bytes {
-    //                 match LiveEvent::parse(&bob[i..]) {
-    //                     Ok(LiveEvent::Realtime(message)) => {
-    //                         // Ignoring Clocks and such for now
-    //                         match message {
-    //                             midly::live::SystemRealtime::TimingClock => {}
-    //                             _ => {}
-    //                         }
-    //                         i += 1
-    //                     }
-    //                     Ok(LiveEvent::Common(message)) => {
-    //                         //Ignoring comons for now
-    //                         let mut text: heapless::String<256> = heapless::String::new();
-    //                         write!(&mut text, "{:?}\n", message).ok();
-    //                         c.local.uart_sender.try_send(text).ok();
-    //                         i += 3;
-    //                     }
-    //                     Ok(LiveEvent::Midi { channel, message }) => {
-    //                         c.shared.led.lock(|l| l.set_high().unwrap());
-    //                         let mut text: heapless::String<256> = heapless::String::new();
-    //                         write!(&mut text, "C:{} {:?}\n", u8::from(channel) + 1, message).ok();
-    //                         c.local.uart_sender.try_send(text).ok();
-    //                         c.local
-    //                             .midi_sender
-    //                             .try_send(MidiEvent {
-    //                                 channel: u8::from(channel) + 1,
-    //                                 message,
-    //                             })
-    //                             .ok();
-    //                         i += 3;
-    //                     }
-    //                     Err(e) => {
-    //                         let mut text: heapless::String<256> = heapless::String::new();
-    //                         write!(&mut text, " {:?}", e).ok();
-    //                         c.local.uart_sender.try_send(text).ok();
-    //                         i += 1;
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         Err(nb::Error::WouldBlock) => {
-    //             c.local
-    //                 .uart_sender
-    //                 .try_send(heapless::String::from("Blocking"))
-    //                 .ok();
-    //         }
-    //         Err(nb::Error::Other(hal::uart::ReadError { err_type, .. })) => {
-    //             let mut uart_error: heapless::String<256> = heapless::String::from("Err: ");
-    //             match err_type {
-    //                 hal::uart::ReadErrorType::Overrun => {
-    //                     uart_error.push_str("Overrun\n").ok()
-    //                 }
-    //                 hal::uart::ReadErrorType::Break => uart_error.push_str("Break\n").ok(),
-    //                 hal::uart::ReadErrorType::Parity => uart_error.push_str("Parity\n").ok(),
-    //                 hal::uart::ReadErrorType::Framing => {
-    //                     uart_error.push_str("framing\n").ok()
-    //                 }
-    //             };
-    //             c.local.uart_sender.try_send(uart_error).ok();
-    //         }
-    //     };
-    // }
+    #[task(local = [clock_high, uart_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
+    fn uart(mut c: uart::Context) {
+        let mut bob = [0u8; 32];
+        if !c.local.uart.uart_is_readable() {
+            let _ = c.local.uart_sender.try_send(heapless::String::from(
+                heapless::String::try_from("Shit aint readable").unwrap(),
+            ));
+            return;
+        }
+        match c.local.uart.read_raw(&mut bob) {
+            Ok(bytes) => {
+                if bytes > 0 {
+                    c.local.uart.write_raw(&bob).ok();
+                }
+                let mut i = 0;
+                while i < bytes {
+                    match LiveEvent::parse(&bob[i..]) {
+                        Ok(LiveEvent::Realtime(message)) => {
+                            // Ignoring Clocks and such for now
+                            match message {
+                                midly::live::SystemRealtime::TimingClock => {}
+                                _ => {}
+                            }
+                            c.local
+                                .midi_sender
+                                .try_send(LiveEvent::Realtime(message))
+                                .ok();
+                            i += 1
+                        }
+                        Ok(LiveEvent::Common(message)) => {
+                            //Ignoring comons for now
+                            let mut text: heapless::String<256> = heapless::String::new();
+                            write!(&mut text, "{:?}\n", message).ok();
+                            c.local.uart_sender.try_send(text).ok();
+                            i += 3;
+                        }
+                        Ok(LiveEvent::Midi { channel, message }) => {
+                            c.shared.led.lock(|l| l.set_high().unwrap());
+                            let mut text: heapless::String<256> = heapless::String::new();
+                            write!(&mut text, "C:{} {:?}\n", u8::from(channel) + 1, message).ok();
+                            c.local.uart_sender.try_send(text).ok();
+                            c.local
+                                .midi_sender
+                                .try_send(LiveEvent::Midi {
+                                    channel: midly::num::u4::from(u8::from(channel) + 1),
+                                    message,
+                                })
+                                .ok();
+                            i += 3;
+                        }
+                        Err(e) => {
+                            let mut text: heapless::String<256> = heapless::String::new();
+                            write!(&mut text, " {:?}", e).ok();
+                            c.local.uart_sender.try_send(text).ok();
+                            i += 1;
+                        }
+                    }
+                }
+            }
+            Err(Error::WouldBlock) => {}
+            Err(Error::Other(_)) => {} // Err(_WouldBlock) => {
+                                       //     // c.local
+                                       //     //     .uart_sender
+                                       //     //     .try_send(heapless::String::from("Blocking"))
+                                       //     //     .ok();
+                                       // }
+                                       // Err(Error(hal::uart::ReadError { err_type, .. })) => {
+                                       //     // let mut uart_error: heapless::String<256> = heapless::String::from("Err: ");
+                                       //     // match err_type {
+                                       //     //     hal::uart::ReadErrorType::Overrun => uart_error.push_str("Overrun\n").ok(),
+                                       //     //     hal::uart::ReadErrorType::Break => uart_error.push_str("Break\n").ok(),
+                                       //     //     hal::uart::ReadErrorType::Parity => uart_error.push_str("Parity\n").ok(),
+                                       //     //     hal::uart::ReadErrorType::Framing => uart_error.push_str("framing\n").ok(),
+                                       //     // };
+                                       //     // c.local.uart_sender.try_send(uart_error).ok();
+                                       // }
+        };
+    }
 
     #[task(priority = 1, shared = [], local = [watchdog])]
     async fn watchdog_feeder(c: watchdog_feeder::Context) {
