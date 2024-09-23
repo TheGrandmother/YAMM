@@ -14,28 +14,12 @@ use rp_pico::hal::pwm::{AnySlice, Slice};
 use rp_pico::hal::pwm::{Channel, DynChannelId};
 use rp_pico::hal::pwm::{DynSliceId, Slices};
 
-/*
-
-GATE_A 5
-GATE_B 6
-GATE_C 7
-DATE_D 8
-
-O_HH    9
-CL      10
-SD      11
-BD      12
-ACCENT  21
-FX      20
-
-START 13
-CLOCK 19
-STOP  18
-
-
-CONF 2,3,4
-
-*/
+pub enum MidiConfig {
+    QuadPoly,
+    QuadMono,
+    DualPoly,
+    DualFancy,
+}
 
 pub type OpenHH = gpio::Pin<Gpio9, gpio::FunctionSioOutput, gpio::PullDown>;
 pub type Clap = gpio::Pin<Gpio10, gpio::FunctionSioOutput, gpio::PullDown>;
@@ -53,8 +37,8 @@ pub type Stop = gpio::Pin<Gpio18, gpio::FunctionSioOutput, gpio::PullDown>;
 pub type Clock = gpio::Pin<Gpio19, gpio::FunctionSioOutput, gpio::PullDown>;
 
 pub type ConfA = gpio::Pin<Gpio2, gpio::SioInput, gpio::PullDown>;
-pub type ConfB = gpio::Pin<Gpio2, gpio::SioInput, gpio::PullDown>;
-pub type ConfC = gpio::Pin<Gpio2, gpio::SioInput, gpio::PullDown>;
+pub type ConfB = gpio::Pin<Gpio3, gpio::SioInput, gpio::PullDown>;
+pub type ConfC = gpio::Pin<Gpio4, gpio::SioInput, gpio::PullDown>;
 
 pub type GateA = gpio::Pin<Gpio5, gpio::FunctionSioOutput, gpio::PullDown>;
 pub type GateB = gpio::Pin<Gpio6, gpio::FunctionSioOutput, gpio::PullDown>;
@@ -150,6 +134,13 @@ impl Bus {
 
 const PWM_TOP: u16 = 0xA00;
 
+pub type SliceAB = hal::pwm::Slice<hal::pwm::Pwm7, pwm::FreeRunning>;
+pub type SliceCD = hal::pwm::Slice<hal::pwm::Pwm0, pwm::FreeRunning>;
+pub type PwmA = hal::gpio::Pin<Gpio14, gpio::FunctionPwm, gpio::PullDown>;
+pub type PwmB = hal::gpio::Pin<Gpio15, gpio::FunctionPwm, gpio::PullDown>;
+pub type PwmC = hal::gpio::Pin<Gpio17, gpio::FunctionPwm, gpio::PullDown>;
+pub type PwmD = hal::gpio::Pin<Gpio16, gpio::FunctionPwm, gpio::PullDown>;
+
 pub struct CvPair<S>
 where
     S: AnySlice,
@@ -158,14 +149,6 @@ where
     max_voltage: f32,
     max_duty: u16,
 }
-
-pub type SliceAB = hal::pwm::Slice<hal::pwm::Pwm7, pwm::FreeRunning>;
-pub type SliceCD = hal::pwm::Slice<hal::pwm::Pwm0, pwm::FreeRunning>;
-pub type PwmA = hal::gpio::Pin<Gpio14, gpio::FunctionPwm, gpio::PullDown>;
-pub type PwmB = hal::gpio::Pin<Gpio15, gpio::FunctionPwm, gpio::PullDown>;
-pub type PwmC = hal::gpio::Pin<Gpio17, gpio::FunctionPwm, gpio::PullDown>;
-pub type PwmD = hal::gpio::Pin<Gpio16, gpio::FunctionPwm, gpio::PullDown>;
-
 impl<S> CvPair<S>
 where
     S: AnySlice,

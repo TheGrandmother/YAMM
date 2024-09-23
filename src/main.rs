@@ -16,7 +16,7 @@ rp2040_timer_monotonic!(Mono);
 #[rtic::app(device = rp_pico::hal::pac, dispatchers = [SW0_IRQ, SW1_IRQ, SW2_IRQ])]
 mod midi_master {
 
-    use embedded_hal::digital::v2::OutputPin;
+    use embedded_hal::digital::v2::{InputPin, OutputPin};
     use fugit::Duration;
     use rp_pico::hal;
 
@@ -44,7 +44,6 @@ mod midi_master {
     use hal::pwm;
 
     use crate::pitched_channel::FourVoiceChannel;
-    use crate::pitched_channel::GpvChannel;
     use crate::Mono;
 
     // use crate::pitched_channel;
@@ -91,6 +90,7 @@ mod midi_master {
         drums: Drums,
         bus: Bus,
         pitched_channel: FourVoiceChannel,
+        divide_clock: bool,
     }
 
     #[shared]
@@ -140,9 +140,34 @@ mod midi_master {
                 blink(&mut led, 100.millis(), true);
                 blinks -= 1;
             }
-        } else {
-            blink(&mut led, 500.millis(), false);
         }
+
+        // ConFig
+
+        let divide_clock = pins.gpio2.into_pull_up_input().is_high().unwrap();
+
+        let midi_conf: MidiConfig;
+
+        match (
+            pins.gpio3.into_pull_up_input().is_high().unwrap(),
+            pins.gpio4.into_pull_up_input().is_high().unwrap(),
+        ) {
+            (true, true) => midi_conf = MidiConfig::QuadPoly,
+            (true, false) => midi_conf = MidiConfig::QuadMono,
+            (false, true) => midi_conf = MidiConfig::DualPoly,
+            (false, false) => midi_conf = MidiConfig::DualFancy,
+        }
+
+        // let mut blinks = match midi_conf {
+        //     MidiConfig::QuadPoly => 1,
+        //     MidiConfig::QuadMono => 2,
+        //     MidiConfig::DualPoly => 3,
+        //     MidiConfig::DualFancy => 4,
+        // };
+        // while blinks > 0 {
+        //     blink(&mut led, 1000.millis(), true);
+        //     blinks -= 1;
+        // }
 
         // Drummmms
 
@@ -165,40 +190,20 @@ mod midi_master {
         };
 
         bus.reset();
+
         let pwm_slices = hal::pwm::Slices::new(c.device.PWM, &mut resets);
-
-        /*
-
-                    pairs: (
-                        CvPair::new(
-                            slices.pwm7,
-                            pins.gpio14.into_function::<gpio::FunctionPwm>(),
-                            pins.gpio15.into_function::<gpio::FunctionPwm>(),
-                        ),
-                        CvPair::new(
-                            slices.pwm0,
-                            pins.gpio16.into_function::<gpio::FunctionPwm>(),
-                            pins.gpio17.into_function::<gpio::FunctionPwm>(),
-                        ),
-                    ),
-                    notes: [None, None, None, None],
-                    gates: [
-                        PwmGate::GateA(pins.gpio5.into_push_pull_output()),
-                        PwmGate::GateB(pins.gpio6.into_push_pull_output()),
-                        PwmGate::GateC(pins.gpio7.into_push_pull_output()),
-                        PwmGate::GateD(pins.gpio8.into_push_pull_output()),
-                    ],
-
-
-        */
 
         let pitched_channel = FourVoiceChannel::new(
             pwm_slices.pwm7,
             pwm_slices.pwm0,
-            pins.gpio14.into_function::<gpio::FunctionPwm>(),
-            pins.gpio15.into_function::<gpio::FunctionPwm>(),
-            pins.gpio17.into_function::<gpio::FunctionPwm>(),
-            pins.gpio16.into_function::<gpio::FunctionPwm>(),
+            (
+                pins.gpio14.into_function::<gpio::FunctionPwm>(),
+                pins.gpio15.into_function::<gpio::FunctionPwm>(),
+            ),
+            (
+                pins.gpio17.into_function::<gpio::FunctionPwm>(),
+                pins.gpio16.into_function::<gpio::FunctionPwm>(),
+            ),
             pins.gpio5.into_push_pull_output(),
             pins.gpio6.into_push_pull_output(),
             pins.gpio7.into_push_pull_output(),
@@ -268,6 +273,7 @@ mod midi_master {
                 drums,
                 pitched_channel,
                 bus,
+                divide_clock,
             },
         );
     }
@@ -287,28 +293,6 @@ mod midi_master {
             if test_step > 42 {
                 test_step = 36;
                 octave = (octave + 1) % 6;
-                let note = octave * 12 + 12;
-                if on {
-                    midi_sender
-                        .try_send(LiveEvent::Midi {
-                            channel: PITCHED_CHANELL,
-                            message: MidiMessage::NoteOn {
-                                key: midly::num::u7::from(note),
-                                vel: midly::num::u7::from(0),
-                            },
-                        })
-                        .ok();
-                } else {
-                    midi_sender
-                        .try_send(LiveEvent::Midi {
-                            channel: PITCHED_CHANELL,
-                            message: MidiMessage::NoteOff {
-                                key: midly::num::u7::from(note),
-                                vel: midly::num::u7::from(0),
-                            },
-                        })
-                        .ok();
-                }
                 on = !on;
             }
             midi_sender
@@ -316,7 +300,27 @@ mod midi_master {
                     midly::live::SystemRealtime::TimingClock,
                 ))
                 .ok();
-            // if on {
+            if on {
+                midi_sender
+                    .try_send(LiveEvent::Midi {
+                        channel: PITCHED_CHANELL,
+                        message: MidiMessage::NoteOn {
+                            key: midly::num::u7::from(test_step + 1),
+                            vel: midly::num::u7::from(0),
+                        },
+                    })
+                    .ok();
+            } else {
+                midi_sender
+                    .try_send(LiveEvent::Midi {
+                        channel: PITCHED_CHANELL,
+                        message: MidiMessage::NoteOff {
+                            key: midly::num::u7::from(test_step),
+                            vel: midly::num::u7::from(0),
+                        },
+                    })
+                    .ok();
+            }
             midi_sender
                 .try_send(LiveEvent::Midi {
                     channel: DRUM_CHANELL,
@@ -343,11 +347,14 @@ mod midi_master {
         }
     }
 
-    #[task(local = [drums, bus, pitched_channel], shared=[])]
+    #[task(local = [drums, bus, pitched_channel, divide_clock], shared=[])]
     async fn midi_handler(c: midi_handler::Context, mut receiver: MessageReceiver<LiveEvent<'_>>) {
         let mut clock_pulse_count: u16 = 0;
         let ppq = 24;
-        let subdiv = 4; // per quarter
+        let subdiv = match c.local.divide_clock {
+            true => ppq / 4,
+            false => 2,
+        }; // per quarter
         loop {
             match receiver.recv().await {
                 Ok(LiveEvent::Midi { channel, message }) => match channel {
@@ -375,7 +382,7 @@ mod midi_master {
                     midly::live::SystemRealtime::TimingClock => {
                         c.local
                             .bus
-                            .set(BusSignals::CLOCK, (clock_pulse_count % (ppq / subdiv)) == 0);
+                            .set(BusSignals::CLOCK, (clock_pulse_count % (subdiv)) == 0);
                         c.local.bus.set(BusSignals::STOP, false);
                         c.local.bus.set(BusSignals::START, false);
                         clock_pulse_count = (clock_pulse_count + 1) % ppq;
