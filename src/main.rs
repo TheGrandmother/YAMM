@@ -174,28 +174,10 @@ mod midi_master {
 
         let pwm_slices = hal::pwm::Slices::new(c.device.PWM, &mut resets);
 
-        let midi_conf: MidiConfig = MidiConfig::QuadMono;
-
-        // match (
-        //     pins.gpio3.into_pull_up_input().is_high().unwrap(),
-        //     pins.gpio4.into_pull_up_input().is_high().unwrap(),
-        // ) {
-        //     (true, true) => midi_conf = MidiConfig::QuadPoly,
-        //     (true, false) => midi_conf = MidiConfig::QuadMono,
-        //     (false, true) => midi_conf = MidiConfig::DualPoly,
-        //     (false, false) => midi_conf = MidiConfig::DualFancy,
-        // }
-
-        // let mut blinks = match midi_conf {
-        //     MidiConfig::QuadPoly => 1,
-        //     MidiConfig::QuadMono => 2,
-        //     MidiConfig::DualPoly => 3,
-        //     MidiConfig::DualFancy => 4,
-        // };
-        // while blinks > 0 {
-        //     blink(&mut led, 1000.millis(), true);
-        //     blinks -= 1;
-        // }
+        let midi_conf: MidiConfig = match pins.gpio3.into_pull_up_input().is_high().unwrap() {
+            true => MidiConfig::QuadPoly,
+            false => MidiConfig::QuadMono,
+        };
 
         let midi_instance = match midi_conf {
             MidiConfig::QuadPoly => (
