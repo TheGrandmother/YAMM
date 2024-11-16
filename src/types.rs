@@ -184,7 +184,7 @@ where
         };
     }
 
-    fn set(&mut self, ch: DynChannelId, voltage: f32) {
+    pub fn set(&mut self, ch: DynChannelId, voltage: f32) {
         let duty: u16;
         if voltage > 5.0 {
             duty = 1

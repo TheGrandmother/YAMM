@@ -45,7 +45,9 @@ mod midi_master {
     use hal::gpio;
     use hal::pwm;
 
-    use crate::pitched_channel::FourVoiceChannel;
+    use crate::pitched_channel::{
+        get_pitched_channel, ChannelQuartet, FourVoiceChannel, PitchedChannel, SingleVoiceChannel,
+    };
     use crate::Mono;
 
     // use crate::pitched_channel;
@@ -54,7 +56,7 @@ mod midi_master {
 
     const MESSAGE_CAPACITY: usize = 16;
     const PITCHED_CHANELL: midly::num::u4 = midly::num::u4::new(1);
-    const DRUM_CHANELL: midly::num::u4 = midly::num::u4::new(2);
+    const DRUM_CHANELL: midly::num::u4 = midly::num::u4::new(5);
     type MessageSender<T> = Sender<'static, T, MESSAGE_CAPACITY>;
     type MessageReceiver<T> = Receiver<'static, T, MESSAGE_CAPACITY>;
     type UartType = hal::uart::UartPeripheral<
@@ -91,7 +93,7 @@ mod midi_master {
         clock_high: bool,
         drums: Drums,
         bus: Bus,
-        pitched_channel: FourVoiceChannel,
+        midi_instance: (Option<FourVoiceChannel>, Option<ChannelQuartet>),
         divide_clock: bool,
     }
 
@@ -148,29 +150,6 @@ mod midi_master {
 
         let divide_clock = pins.gpio2.into_pull_up_input().is_high().unwrap();
 
-        let midi_conf: MidiConfig;
-
-        match (
-            pins.gpio3.into_pull_up_input().is_high().unwrap(),
-            pins.gpio4.into_pull_up_input().is_high().unwrap(),
-        ) {
-            (true, true) => midi_conf = MidiConfig::QuadPoly,
-            (true, false) => midi_conf = MidiConfig::QuadMono,
-            (false, true) => midi_conf = MidiConfig::DualPoly,
-            (false, false) => midi_conf = MidiConfig::DualFancy,
-        }
-
-        // let mut blinks = match midi_conf {
-        //     MidiConfig::QuadPoly => 1,
-        //     MidiConfig::QuadMono => 2,
-        //     MidiConfig::DualPoly => 3,
-        //     MidiConfig::DualFancy => 4,
-        // };
-        // while blinks > 0 {
-        //     blink(&mut led, 1000.millis(), true);
-        //     blinks -= 1;
-        // }
-
         // Drummmms
 
         let mut drums = Drums {
@@ -195,22 +174,71 @@ mod midi_master {
 
         let pwm_slices = hal::pwm::Slices::new(c.device.PWM, &mut resets);
 
-        let pitched_channel = FourVoiceChannel::new(
-            pwm_slices.pwm7,
-            pwm_slices.pwm0,
-            (
-                pins.gpio14.into_function::<gpio::FunctionPwm>(),
-                pins.gpio15.into_function::<gpio::FunctionPwm>(),
+        let midi_conf: MidiConfig = MidiConfig::QuadMono;
+
+        // match (
+        //     pins.gpio3.into_pull_up_input().is_high().unwrap(),
+        //     pins.gpio4.into_pull_up_input().is_high().unwrap(),
+        // ) {
+        //     (true, true) => midi_conf = MidiConfig::QuadPoly,
+        //     (true, false) => midi_conf = MidiConfig::QuadMono,
+        //     (false, true) => midi_conf = MidiConfig::DualPoly,
+        //     (false, false) => midi_conf = MidiConfig::DualFancy,
+        // }
+
+        // let mut blinks = match midi_conf {
+        //     MidiConfig::QuadPoly => 1,
+        //     MidiConfig::QuadMono => 2,
+        //     MidiConfig::DualPoly => 3,
+        //     MidiConfig::DualFancy => 4,
+        // };
+        // while blinks > 0 {
+        //     blink(&mut led, 1000.millis(), true);
+        //     blinks -= 1;
+        // }
+
+        let midi_instance = match midi_conf {
+            MidiConfig::QuadPoly => (
+                Some(FourVoiceChannel::new(
+                    pwm_slices.pwm7,
+                    pwm_slices.pwm0,
+                    (
+                        pins.gpio14.into_function::<gpio::FunctionPwm>(),
+                        pins.gpio15.into_function::<gpio::FunctionPwm>(),
+                    ),
+                    (
+                        pins.gpio17.into_function::<gpio::FunctionPwm>(),
+                        pins.gpio16.into_function::<gpio::FunctionPwm>(),
+                    ),
+                    pins.gpio5.into_push_pull_output(),
+                    pins.gpio6.into_push_pull_output(),
+                    pins.gpio7.into_push_pull_output(),
+                    pins.gpio8.into_push_pull_output(),
+                )),
+                None,
             ),
-            (
-                pins.gpio17.into_function::<gpio::FunctionPwm>(),
-                pins.gpio16.into_function::<gpio::FunctionPwm>(),
+            MidiConfig::QuadMono => (
+                None,
+                Some(ChannelQuartet::new(
+                    [1, 2, 3, 4],
+                    pwm_slices.pwm7,
+                    pwm_slices.pwm0,
+                    (
+                        pins.gpio14.into_function::<gpio::FunctionPwm>(),
+                        pins.gpio15.into_function::<gpio::FunctionPwm>(),
+                    ),
+                    (
+                        pins.gpio17.into_function::<gpio::FunctionPwm>(),
+                        pins.gpio16.into_function::<gpio::FunctionPwm>(),
+                    ),
+                    pins.gpio5.into_push_pull_output(),
+                    pins.gpio6.into_push_pull_output(),
+                    pins.gpio7.into_push_pull_output(),
+                    pins.gpio8.into_push_pull_output(),
+                )),
             ),
-            pins.gpio5.into_push_pull_output(),
-            pins.gpio6.into_push_pull_output(),
-            pins.gpio7.into_push_pull_output(),
-            pins.gpio8.into_push_pull_output(),
-        );
+            _ => (None, None),
+        };
 
         // let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
         //     c.device.USBCTRL_REGS,
@@ -240,21 +268,7 @@ mod midi_master {
             .unwrap();
         uart.enable_rx_interrupt();
 
-        // let gate = pins.gpio5.into_push_pull_output();
-        // let a_pin = pins.gpio14.into_function::<gpio::FunctionPwm>();
-        // let b_pin = ;
-
-        // let pitched_channel = GpvChannel::new(
-        //     1,
-        //     PwmGate::GateA(pins.gpio5.into_push_pull_output()),
-        //     pwm_slices.pwm7,
-        //     (
-        //         pins.gpio14.into_function::<gpio::FunctionPwm>(),
-        //         pins.gpio15.into_function::<gpio::FunctionPwm>(),
-        //     ),
-        // );
-
-        let (uart_sender, uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
+        let (uart_sender, _uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
         let (midi_sender, midi_receiver) = make_channel!(LiveEvent, MESSAGE_CAPACITY);
 
         watchdog.start(fugit::ExtU32::micros(10_000));
@@ -273,7 +287,7 @@ mod midi_master {
                 midi_sender,
                 clock_high: false,
                 drums,
-                pitched_channel,
+                midi_instance,
                 bus,
                 divide_clock,
             },
@@ -349,7 +363,7 @@ mod midi_master {
         }
     }
 
-    #[task(local = [drums, bus, pitched_channel, divide_clock], shared=[])]
+    #[task(local = [drums, bus, midi_instance, divide_clock], shared=[])]
     async fn midi_handler(c: midi_handler::Context, mut receiver: MessageReceiver<LiveEvent<'_>>) {
         let mut clock_pulse_count: u16 = 0;
         let ppq = 24;
@@ -360,21 +374,23 @@ mod midi_master {
         loop {
             match receiver.recv().await {
                 Ok(LiveEvent::Midi { channel, message }) => match channel {
-                    PITCHED_CHANELL => match message {
-                        MidiMessage::NoteOn { key, vel: _ } => {
-                            c.local.pitched_channel.note_on(u8::from(key))
-                        }
-                        MidiMessage::NoteOff { key, vel: _ } => {
-                            c.local.pitched_channel.note_off(u8::from(key))
-                        }
-                        _ => {}
-                    },
                     DRUM_CHANELL => match message {
                         MidiMessage::NoteOn { key, vel: _ } => c.local.drums.set(key, true),
                         MidiMessage::NoteOff { key, vel: _ } => c.local.drums.set(key, false),
                         _ => {}
                     },
-                    _ => {}
+                    channel => match get_pitched_channel(c.local.midi_instance) {
+                        Some(thing) => match message {
+                            MidiMessage::NoteOn { key, vel: _ } => {
+                                thing.note_on(u8::from(key), channel.into())
+                            }
+                            MidiMessage::NoteOff { key, vel: _ } => {
+                                thing.note_off(u8::from(key), channel.into())
+                            }
+                            _ => {}
+                        },
+                        None => {}
+                    },
                 },
                 Ok(LiveEvent::Realtime(event_type)) => match event_type {
                     midly::live::SystemRealtime::TimingClock => {
@@ -388,14 +404,17 @@ mod midi_master {
                         clock_pulse_count = (clock_pulse_count + 1) % ppq;
                     }
                     midly::live::SystemRealtime::Stop => {
+                        get_pitched_channel(c.local.midi_instance)
+                            .unwrap()
+                            .all_notes_off();
                         c.local.bus.set(BusSignals::CLOCK, false);
-                        c.local.bus.set(BusSignals::STOP, true)
+                        c.local.bus.set(BusSignals::STOP, true);
                     }
                     midly::live::SystemRealtime::Start => c.local.bus.set(BusSignals::START, true),
                     _ => {}
                 },
                 Ok(LiveEvent::Common(_)) => {}
-                Err(_) => {} // Errors are for then weak
+                Err(_) => {} // Errors are for the weak
             }
         }
     }
@@ -460,22 +479,7 @@ mod midi_master {
                 }
             }
             Err(Error::WouldBlock) => {}
-            Err(Error::Other(_)) => {} // Err(_WouldBlock) => {
-                                       //     // c.local
-                                       //     //     .uart_sender
-                                       //     //     .try_send(heapless::String::from("Blocking"))
-                                       //     //     .ok();
-                                       // }
-                                       // Err(Error(hal::uart::ReadError { err_type, .. })) => {
-                                       //     // let mut uart_error: heapless::String<256> = heapless::String::from("Err: ");
-                                       //     // match err_type {
-                                       //     //     hal::uart::ReadErrorType::Overrun => uart_error.push_str("Overrun\n").ok(),
-                                       //     //     hal::uart::ReadErrorType::Break => uart_error.push_str("Break\n").ok(),
-                                       //     //     hal::uart::ReadErrorType::Parity => uart_error.push_str("Parity\n").ok(),
-                                       //     //     hal::uart::ReadErrorType::Framing => uart_error.push_str("framing\n").ok(),
-                                       //     // };
-                                       //     // c.local.uart_sender.try_send(uart_error).ok();
-                                       // }
+            Err(Error::Other(_)) => {}
         };
     }
 
@@ -486,53 +490,4 @@ mod midi_master {
             Mono::delay(1000.micros()).await;
         }
     }
-
-    // #[task(
-    //     priority = 2,
-    //     shared = [led],
-    //     local = [usb_bus],
-    // )]
-    // async fn usb_handler(
-    //     mut c: usb_handler::Context,
-    //     mut receiver: MessageReceiver<heapless::String<256>>,
-    // ) {
-    //     let mut serial = usbd_serial::SerialPort::new(&c.local.usb_bus);
-    //     let mut usb_dev = UsbDeviceBuilder::new(&c.local.usb_bus, UsbVidPid(0x16c0, 0x27dd))
-    //         .manufacturer("Things")
-    //         .product("Stuf")
-    //         .serial_number("Whatever")
-    //         .device_class(2)
-    //         .build();
-
-    //     c.shared.led.lock(|l| l.set_high().ok());
-    //     while !usb_dev.poll(&mut [&mut serial]) {
-    //         Timer::delay(2.millis()).await;
-    //     }
-    //     c.shared.led.lock(|l| l.set_low().ok());
-
-    //     let clear: heapless::String<256> = heapless::String::from("Connected\n");
-    //     let mut sent = false;
-    //     while !sent {
-    //         match serial.write(clear.as_bytes()) {
-    //             Ok(_) => sent = true,
-    //             Err(_) => (),
-    //         }
-    //         usb_dev.poll(&mut [&mut serial]);
-    //         Timer::delay(5.millis()).await;
-    //     }
-
-    //     loop {
-    //         match receiver.try_recv() {
-    //             Ok(text) => match serial.write(text.as_bytes()) {
-    //                 Ok(_) => 1,
-    //                 Err(_) => 1,
-    //             },
-    //             _ => 0,
-    //         };
-
-    //         usb_dev.poll(&mut [&mut serial]);
-
-    //         Timer::delay(7.millis()).await;
-    //     }
-    // }
 }
