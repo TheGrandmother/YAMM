@@ -212,6 +212,7 @@ pub struct ChannelQuartet {
     pairs: (CvPair<SliceAB>, CvPair<SliceCD>),
     gates: [PwmGate; 4],
     channel_map: [u8; 4],
+    notes: [Option<u8>; 4],
 }
 
 impl ChannelQuartet {
@@ -229,6 +230,7 @@ impl ChannelQuartet {
         return Self {
             channel_map,
             offset: 0,
+            notes: [None, None, None, None],
             pairs: (
                 CvPair::new(slice_ab, pin_a, pin_b),
                 CvPair::new(slice_cd, pin_d, pin_c),
@@ -242,7 +244,7 @@ impl ChannelQuartet {
         };
     }
 
-    fn midi_chan_to_voice_id(&mut self, midi_chan: u8) -> Option<u8> {
+    fn get_voice_id(&mut self, midi_chan: u8) -> Option<u8> {
         for i in 0..4 {
             if self.channel_map[i] == midi_chan {
                 return Some(i.try_into().unwrap());
@@ -252,7 +254,7 @@ impl ChannelQuartet {
     }
 
     fn find_gate(&mut self, midi_chan: u8) -> Option<&mut PwmGate> {
-        return match self.midi_chan_to_voice_id(midi_chan) {
+        return match self.get_voice_id(midi_chan) {
             None => None,
             Some(0) => Some(&mut self.gates[0]),
             Some(1) => Some(&mut self.gates[1]),
@@ -264,11 +266,17 @@ impl ChannelQuartet {
 
     fn set_channel_note(&mut self, channel: u8, note: u8) {
         let voltage = note_to_voltage(note - self.offset);
-        match self.midi_chan_to_voice_id(channel) {
-            Some(0) => self.pairs.0.set_a(voltage),
-            Some(1) => self.pairs.0.set_b(voltage),
-            Some(2) => self.pairs.1.set_a(voltage),
-            Some(3) => self.pairs.1.set_b(voltage),
+        match self.get_voice_id(channel) {
+            Some(id) => {
+                match id {
+                    0 => self.pairs.0.set_a(voltage),
+                    1 => self.pairs.0.set_b(voltage),
+                    2 => self.pairs.1.set_a(voltage),
+                    3 => self.pairs.1.set_b(voltage),
+                    _ => {}
+                }
+                self.notes[usize::from(id)] = Some(note);
+            }
             _ => {}
         }
     }
@@ -290,8 +298,16 @@ impl PitchedChannel for ChannelQuartet {
         }
     }
 
-    fn note_off(&mut self, _key: u8, midi_chan: u8) {
-        self.find_gate(midi_chan).unwrap().set_state(false).unwrap()
+    fn note_off(&mut self, key: u8, midi_chan: u8) {
+        match self.get_voice_id(midi_chan) {
+            Some(id) => {
+                if self.notes[usize::from(id)] == Some(key) {
+                    self.find_gate(midi_chan).unwrap().set_state(false).unwrap();
+                    self.notes[usize::from(id)] = None;
+                }
+            }
+            _ => {}
+        }
     }
 }
 
