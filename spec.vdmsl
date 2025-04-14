@@ -1,0 +1,40 @@
+types
+
+  Timestamp = nat;
+  MidiEvent = token;
+  Sequence = map Timestamp to MidiEvent ;
+  State = <playing> | <stop>;
+
+  state Player of
+    pointer : Timestamp
+    sequence : Sequence
+    player_state : State
+  init s == s = mk_Player(0, {|->}, <stop>)
+  end;
+
+operations
+  TICK() emitted: set of MidiEvent
+  ext wr player_state : State
+      wr pointer : Timestamp
+      rd sequence : Sequence
+  post cases player_state~:
+    <stop> -> emitted = {} and pointer~ = pointer,
+    <playing> ->
+      pointer > pointer~ and
+      forall e in set emitted & exists ts in set dom sequence & e = sequence(ts) and ts > pointer~ and ts <= pointer
+  end and player_state~ = player_state;
+
+  PLAY()
+  ext wr player_state : State
+  post player_state = <playing>;
+
+  STOP()
+  ext wr player_state : State
+      wr pointer      : Timestamp
+  post player_state = <stop> and pointer = 0;
+
+  INSERT(event: MidiEvent)
+  ext rd pointer  : Timestamp
+      wr sequence : Sequence
+  post sequence(pointer) = event;
+

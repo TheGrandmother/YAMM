@@ -1,0 +1,29 @@
+module Voices
+exports all
+definitions
+types
+  Timestamp = nat;
+  MidiEvent = token;
+  Output = token; -- A "request" to output something on a physical output
+
+  /*
+    There is a set of relevant midi messages.
+    Therse are the messages that are such that they are effecting an output.
+    When a midi message comes it can either be added to the set, replace an entity in the set, or be dropped.
+    The process of assigning active messages to outputs is what the voice config does
+  */
+  state Voices of
+    active_messages : set of MidiEvent
+  end;
+operations
+  -- Will  by virtue of some logic insert the event into the
+  RECEIVE(event: MidiEvent)
+  ext wr active_messages : set of MidiEvent
+  post true;
+
+  --Will given the active messages provide the destired output states
+  EMITT() outs: set of Output
+  ext rd active_messages : set of MidiEvent
+  post true;
+
+end Voices
