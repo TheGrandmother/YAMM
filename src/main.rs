@@ -15,7 +15,6 @@ rp2040_timer_monotonic!(Mono);
 
 #[rtic::app(device = rp_pico::hal::pac, dispatchers = [SW0_IRQ, SW1_IRQ, SW2_IRQ])]
 mod midi_master {
-
     use ::nb::Error;
     use embedded_hal::can::nb;
     use embedded_hal::digital::v2::{InputPin, OutputPin};
@@ -153,21 +152,21 @@ mod midi_master {
         // Drummmms
 
         let mut drums = Drums {
-            open_hh: pins.gpio9.into_push_pull_output(),
-            clap: pins.gpio10.into_push_pull_output(),
-            snare: pins.gpio11.into_push_pull_output(),
-            kick: pins.gpio12.into_push_pull_output(),
-            fx: pins.gpio20.into_push_pull_output(),
-            accent: pins.gpio21.into_push_pull_output(),
-            closed_hh: pins.gpio22.into_push_pull_output(),
+            open_hh: pins.gpio7.into_push_pull_output(),
+            clap: pins.gpio9.into_push_pull_output(),
+            snare: pins.gpio10.into_push_pull_output(),
+            kick: pins.gpio27.into_push_pull_output(),
+            fx: pins.gpio6.into_push_pull_output(),
+            accent: pins.gpio5.into_push_pull_output(),
+            closed_hh: pins.gpio8.into_push_pull_output(),
         };
 
         drums.reset();
 
         let mut bus = Bus {
-            start: pins.gpio13.into_push_pull_output(),
+            start: pins.gpio26.into_push_pull_output(),
             stop: pins.gpio18.into_push_pull_output(),
-            clock: pins.gpio19.into_push_pull_output(),
+            clock: pins.gpio28.into_push_pull_output(),
         };
 
         bus.reset();
@@ -192,10 +191,10 @@ mod midi_master {
                         pins.gpio17.into_function::<gpio::FunctionPwm>(),
                         pins.gpio16.into_function::<gpio::FunctionPwm>(),
                     ),
-                    pins.gpio5.into_push_pull_output(),
-                    pins.gpio6.into_push_pull_output(),
-                    pins.gpio7.into_push_pull_output(),
-                    pins.gpio8.into_push_pull_output(),
+                    pins.gpio22.into_push_pull_output(),
+                    pins.gpio21.into_push_pull_output(),
+                    pins.gpio20.into_push_pull_output(),
+                    pins.gpio19.into_push_pull_output(),
                 )),
                 None,
             ),
@@ -213,10 +212,10 @@ mod midi_master {
                         pins.gpio17.into_function::<gpio::FunctionPwm>(),
                         pins.gpio16.into_function::<gpio::FunctionPwm>(),
                     ),
-                    pins.gpio5.into_push_pull_output(),
-                    pins.gpio6.into_push_pull_output(),
-                    pins.gpio7.into_push_pull_output(),
-                    pins.gpio8.into_push_pull_output(),
+                    pins.gpio22.into_push_pull_output(),
+                    pins.gpio21.into_push_pull_output(),
+                    pins.gpio20.into_push_pull_output(),
+                    pins.gpio19.into_push_pull_output(),
                 )),
             ),
             _ => (None, None),
@@ -282,48 +281,52 @@ mod midi_master {
         mut midi_sender: MessageSender<LiveEvent<'_>>,
         // mut uart_sender: MessageSender<heapless::String<256>>,
     ) {
+        let mut note: midly::num::u7 = 12.into();
         let mut test_step: u8 = 36;
         let mut on: bool = true;
         let mut octave: u8 = 0;
-        let drum = 36;
+        let drum = 37;
         // uart_sender.try_send(heapless::String::from("Testing")).ok();
         loop {
+            if note >= 12 * 6 {
+                note = 12.into();
+                midi_sender
+                    .try_send(LiveEvent::Realtime(
+                        midly::live::SystemRealtime::TimingClock,
+                    ))
+                    .ok();
+            }
             if test_step > 42 {
-                test_step = 36;
+                test_step = 35;
                 octave = (octave + 1) % 6;
                 on = !on;
             }
-            midi_sender
-                .try_send(LiveEvent::Realtime(
-                    midly::live::SystemRealtime::TimingClock,
-                ))
-                .ok();
-            if on {
-                midi_sender
-                    .try_send(LiveEvent::Midi {
-                        channel: PITCHED_CHANELL,
-                        message: MidiMessage::NoteOn {
-                            key: midly::num::u7::from(test_step + 1),
-                            vel: midly::num::u7::from(0),
-                        },
-                    })
-                    .ok();
-            } else {
-                midi_sender
-                    .try_send(LiveEvent::Midi {
-                        channel: PITCHED_CHANELL,
-                        message: MidiMessage::NoteOff {
-                            key: midly::num::u7::from(test_step),
-                            vel: midly::num::u7::from(0),
-                        },
-                    })
-                    .ok();
-            }
+            // if on {
+            //     midi_sender
+            //         .try_send(LiveEvent::Midi {
+            //             channel: PITCHED_CHANELL,
+            //             message: MidiMessage::NoteOn {
+            //                 key: midly::num::u7::from(test_step + 1),
+            //                 vel: midly::num::u7::from(0),
+            //             },
+            //         })
+            //         .ok();
+            // } else {
+            //     midi_sender
+            //         .try_send(LiveEvent::Midi {
+            //             channel: PITCHED_CHANELL,
+            //             message: MidiMessage::NoteOff {
+            //                 key: midly::num::u7::from(test_step),
+            //                 vel: midly::num::u7::from(0),
+            //             },
+            //         })
+            //         .ok();
+            // }
             midi_sender
                 .try_send(LiveEvent::Midi {
                     channel: DRUM_CHANELL,
                     message: MidiMessage::NoteOn {
-                        key: midly::num::u7::from(drum + octave),
+                        key: midly::num::u7::from(drum),
                         vel: midly::num::u7::from(0),
                     },
                 })
@@ -333,14 +336,52 @@ mod midi_master {
                 .try_send(LiveEvent::Midi {
                     channel: DRUM_CHANELL,
                     message: MidiMessage::NoteOff {
-                        key: midly::num::u7::from(drum + octave - 1),
+                        key: midly::num::u7::from(drum - 1),
                         vel: midly::num::u7::from(0),
                     },
                 })
                 .ok();
             // }
+            //
+            midi_sender
+                .try_send(LiveEvent::Midi {
+                    channel: 1.into(),
+                    message: MidiMessage::NoteOn {
+                        key: ((u8::from(note) / 12) * 12).into(),
+                        vel: midly::num::u7::from(0),
+                    },
+                })
+                .ok();
+            midi_sender
+                .try_send(LiveEvent::Midi {
+                    channel: 2.into(),
+                    message: MidiMessage::NoteOn {
+                        key: ((u8::from(note) / 12) * 12).into(),
+                        vel: midly::num::u7::from(0),
+                    },
+                })
+                .ok();
+            midi_sender
+                .try_send(LiveEvent::Midi {
+                    channel: 3.into(),
+                    message: MidiMessage::NoteOn {
+                        key: ((u8::from(note) / 12) * 12).into(),
+                        vel: midly::num::u7::from(0),
+                    },
+                })
+                .ok();
+            midi_sender
+                .try_send(LiveEvent::Midi {
+                    channel: 4.into(),
+                    message: MidiMessage::NoteOn {
+                        key: ((u8::from(note) / 12) * 12).into(),
+                        vel: midly::num::u7::from(0),
+                    },
+                })
+                .ok();
+            note += 1.into();
 
-            Mono::delay(100_000.micros()).await;
+            Mono::delay(50_00.micros()).await;
             test_step += 1;
         }
     }
@@ -461,7 +502,15 @@ mod midi_master {
                 }
             }
             Err(Error::WouldBlock) => {}
-            Err(Error::Other(_)) => {}
+            Err(Error::Other(_)) => {
+                c.shared.led.lock(|led| {
+                    if led.is_high().unwrap() {
+                        led.set_low().unwrap()
+                    } else {
+                        led.set_high().unwrap()
+                    }
+                });
+            }
         };
     }
 

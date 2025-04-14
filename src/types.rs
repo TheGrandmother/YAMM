@@ -21,35 +21,33 @@ pub enum MidiConfig {
     DualFancy,
 }
 
-pub type OpenHH = gpio::Pin<Gpio9, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type Clap = gpio::Pin<Gpio10, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type Snare = gpio::Pin<Gpio11, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type BD = gpio::Pin<Gpio12, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type FX = gpio::Pin<Gpio20, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type Accent = gpio::Pin<Gpio21, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type ClosedHH = gpio::Pin<Gpio22, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type OpenHH = gpio::Pin<Gpio7, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Clap = gpio::Pin<Gpio9, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Snare = gpio::Pin<Gpio10, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type BD = gpio::Pin<Gpio27, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type FX = gpio::Pin<Gpio6, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Accent = gpio::Pin<Gpio5, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type ClosedHH = gpio::Pin<Gpio8, gpio::FunctionSioOutput, gpio::PullDown>;
 
 // not used
-pub type Start = gpio::Pin<Gpio13, gpio::FunctionSioOutput, gpio::PullDown>;
-
-// pub type Ctrl = gpio::Pin<Gpio17, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Start = gpio::Pin<Gpio26, gpio::FunctionSioOutput, gpio::PullDown>;
 pub type Stop = gpio::Pin<Gpio18, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type Clock = gpio::Pin<Gpio19, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type Clock = gpio::Pin<Gpio28, gpio::FunctionSioOutput, gpio::PullDown>;
 
 pub type ConfA = gpio::Pin<Gpio2, gpio::SioInput, gpio::PullDown>;
 pub type ConfB = gpio::Pin<Gpio3, gpio::SioInput, gpio::PullDown>;
-pub type ConfC = gpio::Pin<Gpio4, gpio::SioInput, gpio::PullDown>;
+pub type ClockIn = gpio::Pin<Gpio4, gpio::SioInput, gpio::PullDown>;
 
-pub type GateA = gpio::Pin<Gpio5, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type GateB = gpio::Pin<Gpio6, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type GateC = gpio::Pin<Gpio7, gpio::FunctionSioOutput, gpio::PullDown>;
-pub type GateD = gpio::Pin<Gpio8, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type GateA = gpio::Pin<Gpio22, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type GateB = gpio::Pin<Gpio21, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type GateC = gpio::Pin<Gpio20, gpio::FunctionSioOutput, gpio::PullDown>;
+pub type GateD = gpio::Pin<Gpio19, gpio::FunctionSioOutput, gpio::PullDown>;
 
 pub enum PwmGate {
-    GateA(gpio::Pin<Gpio5, gpio::FunctionSioOutput, gpio::PullDown>),
-    GateB(gpio::Pin<Gpio6, gpio::FunctionSioOutput, gpio::PullDown>),
-    GateC(gpio::Pin<Gpio7, gpio::FunctionSioOutput, gpio::PullDown>),
-    GateD(gpio::Pin<Gpio8, gpio::FunctionSioOutput, gpio::PullDown>),
+    GateA(gpio::Pin<Gpio22, gpio::FunctionSioOutput, gpio::PullDown>),
+    GateB(gpio::Pin<Gpio21, gpio::FunctionSioOutput, gpio::PullDown>),
+    GateC(gpio::Pin<Gpio20, gpio::FunctionSioOutput, gpio::PullDown>),
+    GateD(gpio::Pin<Gpio19, gpio::FunctionSioOutput, gpio::PullDown>),
 }
 impl PwmGate {
     pub(crate) fn set_state(&mut self, state: bool) -> Option<()> {
@@ -132,7 +130,7 @@ impl Bus {
     }
 }
 
-const PWM_TOP: u16 = 0xA00;
+const PWM_TOP: u16 = 0x100;
 
 pub type SliceAB = hal::pwm::Slice<hal::pwm::Pwm7, pwm::FreeRunning>;
 pub type SliceCD = hal::pwm::Slice<hal::pwm::Pwm0, pwm::FreeRunning>;
@@ -194,8 +192,8 @@ where
             duty = (self.max_duty as f32 * voltage / 5.0) as u16;
         }
         match ch {
-            DynChannelId::A => self.slice.channel_a.set_duty(duty),
-            DynChannelId::B => self.slice.channel_b.set_duty(duty),
+            DynChannelId::A => self.slice.channel_a.set_duty(self.max_duty - duty),
+            DynChannelId::B => self.slice.channel_b.set_duty(self.max_duty - duty),
         }
     }
 
