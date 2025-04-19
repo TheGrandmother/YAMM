@@ -2,28 +2,55 @@ module Voices
 exports all
 definitions
 types
+  Channel = nat;
   Timestamp = nat;
-  MidiEvent = token;
-  Output = token; -- A "request" to output something on a physical output
+  MidiEvent :: channel : nat
+              type : token
+  ;
+
+  Config ::  polyphpony: nat
+            channels: set of Channel
+            drum_channel: Channel
+  inv c == not(c.drum_channel in set c.channels)
+  ;
+
+
+  -- A request to output something on a pin
+  Output ::
+    channel: Channel
+    value : real | bool
+  ;
 
   /*
     There is a set of relevant midi messages.
     Therse are the messages that are such that they are effecting an output.
     When a midi message comes it can either be added to the set, replace an entity in the set, or be dropped.
-    The process of assigning active messages to outputs is what the voice config does
+    
+    The adding and removing of messages needs to be config aware.
+
   */
   state Voices of
     active_messages : set of MidiEvent
   end;
 operations
-  -- Will  by virtue of some logic insert the event into the
-  RECEIVE(event: MidiEvent)
+  -- Will  by virtue of some logic insert the event into the active set
+  RECEIVE(e: MidiEvent, config: Config)
   ext wr active_messages : set of MidiEvent
-  post true;
+  post not(e.channel in set config.channels or e.channel = config.drum_channel) => active_messages = active_messages~;
 
-  --Will given the active messages provide the destired output states
-  EMITT() outs: set of Output
-  ext rd active_messages : set of MidiEvent
-  post true;
+  CLEAR()
+  ext wr active_messages : set of MidiEvent
+  post active_messages = {};
+
+functions
+
+receive(e: MidiEvent) s: set of MidiEvent
+post false;
+
+transient(e: MidiEvent) res : bool
+post undefined;
+
+mapToOut(e: MidiEvent) o : Output
+post undefined;
 
 end Voices

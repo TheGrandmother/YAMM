@@ -1,0 +1,78 @@
+types
+
+  -- Midi clock count
+  Timestamp = nat;
+  MidiEvent :: ts : Timestamp;
+  Sequence = set of MidiEvent;
+  State = <playing> | <stop>;
+
+  -- There is one player per channel.
+  -- Add a divisor for extending patterns
+  state Player of
+    pointer : Timestamp
+    sequence : Sequence
+    player_state : State
+    length : Timestamp
+  init s == s = mk_Player(0, {}, <stop>, 0)
+  inv s ==
+    let
+      all_in_bounds = forall me in set s.sequence & me.ts <= s.length
+    in
+      all_in_bounds
+  end;
+
+operations
+  TICK(dt: Timestamp) emitted: set of MidiEvent
+  ext wr pointer : Timestamp
+      rd sequence : Sequence
+      rd player_state : State
+      rd length : Timestamp
+  post cases player_state:
+    <stop> -> emitted = {} and pointer~ = pointer,
+    <playing> ->
+      pointer = (pointer~ + dt) rem length and
+      forall e in set emitted &
+        e in set sequence and
+        pointer~ < e.ts and (e.ts < pointer or e.ts < pointer~ + dt)
+  end;
+
+  PLAY()
+  ext wr player_state : State
+  post player_state = <playing>;
+
+  STOP()
+  ext wr player_state : State
+      wr pointer      : Timestamp
+  post player_state = <stop> and pointer = 0;
+
+  INSERT(event: MidiEvent)
+  ext wr sequence : Sequence
+  post event in set sequence;
+
+  STEP(step: Timestamp)
+  ext wr pointer : Timestamp
+  post pointer = pointer~ + step;
+
+  DELETE(e: MidiEvent)
+  ext wr sequence : Sequence
+  post forall me in set sequence~ & matches(e, me) => not(me in set sequence);
+
+
+functions
+  /*
+    Tricky problem:
+    How do we replace a message.
+    We would need to replace a message.
+    We must also possibly delete any related events like a note off
+    If I allow for microtiming identifying the event to replace will be tricky.
+      We then cannot compare the timestamps directly as the same "intended event" may have different timestamps.
+    We could resolve this by having the micro timing be a separate field and thus idinitify based on timestamp.
+  */
+  matches(m1: MidiEvent, m2: MidiEvent) res : bool
+  post m1 = m2 => res;
+
+  isOn(e: MidiEvent) res: bool
+  post undefined;
+
+  isOff(e: MidiEvent) res: bool
+  post undefined;
