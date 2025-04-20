@@ -7,8 +7,8 @@
 use panic_semihosting as _; // panic handler
 
 mod outs;
-mod pitched_channel;
-mod types;
+// mod pitched_channel;
+mod pwm_pair;
 
 use rtic_monotonics::rp2040::prelude::*;
 
@@ -45,15 +45,9 @@ mod midi_master {
     use hal::gpio;
     use hal::pwm;
 
-    use crate::outs::{Gate, GateMappings, OutputHandler, OutputRequest};
-    use crate::pitched_channel::{
-        get_pitched_channel, ChannelQuartet, FourVoiceChannel, PitchedChannel, SingleVoiceChannel,
-    };
+    use crate::outs::{Cv, CvPorts, Gate, GateMappings, OutputHandler, OutputRequest};
+    use crate::pwm_pair::CvPair;
     use crate::Mono;
-
-    // use crate::pitched_channel;
-    // use crate::pitched_channel::GpvChannel;
-    use crate::types::*;
 
     const MESSAGE_CAPACITY: usize = 16;
     const PITCHED_CHANELL: midly::num::u4 = midly::num::u4::new(1);
@@ -92,7 +86,6 @@ mod midi_master {
         uart: UartType,
         midi_sender: MessageSender<LiveEvent<'static>>,
         clock_high: bool,
-        midi_instance: (Option<FourVoiceChannel>, Option<ChannelQuartet>),
         divide_clock: bool,
         output_handler: OutputHandler,
     }
@@ -134,6 +127,17 @@ mod midi_master {
             &mut resets,
         );
 
+        let mut led = pins.gpio25.into_push_pull_output().into_dyn_pin();
+        led.set_high().unwrap();
+        if watchdog_timeout {
+            led.set_low().unwrap();
+            let mut blinks = 5;
+            while blinks > 0 {
+                blink(&mut led, 100.millis(), true);
+                blinks -= 1;
+            }
+        }
+
         let gate_pins = GateMappings {
             open_hh: pins.gpio7.into_push_pull_output(),
             clap: pins.gpio9.into_push_pull_output(),
@@ -151,34 +155,23 @@ mod midi_master {
             gate_d: pins.gpio19.into_push_pull_output(),
         };
 
-        let mut output_handler = OutputHandler::new(gate_pins);
-        let mut led = pins.gpio25.into_push_pull_output().into_dyn_pin();
-        output_handler.reset();
-
-        led.set_high().unwrap();
-        if watchdog_timeout {
-            led.set_low().unwrap();
-            let mut blinks = 5;
-            while blinks > 0 {
-                blink(&mut led, 100.millis(), true);
-                blinks -= 1;
-            }
-        }
-
-        // ConFig
-
-        let divide_clock = pins.gpio2.into_pull_up_input().is_high().unwrap();
-
         let pwm_slices = hal::pwm::Slices::new(c.device.PWM, &mut resets);
 
-        let midi_conf: MidiConfig = match pins.gpio3.into_pull_up_input().is_high().unwrap() {
-            true => MidiConfig::QuadPoly,
-            false => MidiConfig::QuadMono,
+        let cv_ports = CvPorts {
+            ab_pair: CvPair::new(
+                pwm_slices.pwm7,
+                pins.gpio14.into_function::<gpio::FunctionPwm>(),
+                pins.gpio15.into_function::<gpio::FunctionPwm>(),
+            ),
+            cd_pair: CvPair::new(
+                pwm_slices.pwm0,
+                pins.gpio16.into_function::<gpio::FunctionPwm>(),
+                pins.gpio17.into_function::<gpio::FunctionPwm>(),
+            ),
         };
 
-        let midi_instance = match midi_conf {
-            _ => (None, None),
-        };
+        let mut output_handler = OutputHandler::new(gate_pins, cv_ports);
+        output_handler.reset();
 
         // let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
         //     c.device.USBCTRL_REGS,
@@ -187,6 +180,8 @@ mod midi_master {
         //     true,
         //     &mut resets,
         // ));
+        //
+        let divide_clock = pins.gpio2.into_pull_up_input().is_high().unwrap();
 
         // Set up UART on GP0 and GP1 (Pico pins 1 and 2)
         let uart_pins = (
@@ -228,7 +223,6 @@ mod midi_master {
                 watchdog,
                 midi_sender,
                 clock_high: false,
-                midi_instance,
                 divide_clock,
                 output_handler,
             },
@@ -259,9 +253,37 @@ mod midi_master {
             Gate::Stop,
         ];
         let mut i = 0;
-        let mut state = true;
         let max = 14;
+        let channels = [Cv::A, Cv::B, Cv::C, Cv::D];
+        let mut channel = 0;
+        let mut note = 12;
         loop {
+            if note > 12 * 6 {
+                note = 12;
+                channel += 1;
+            }
+            if channel == 4 {
+                output_sender
+                    .try_send(OutputRequest::SetVal(channels[0], 0.0))
+                    .ok();
+                output_sender
+                    .try_send(OutputRequest::SetVal(channels[1], 0.0))
+                    .ok();
+                output_sender
+                    .try_send(OutputRequest::SetVal(channels[2], 0.0))
+                    .ok();
+                output_sender
+                    .try_send(OutputRequest::SetVal(channels[3], 0.0))
+                    .ok();
+                channel = 0
+            }
+
+            output_sender
+                .try_send(OutputRequest::SetNote(channels[channel], note))
+                .ok();
+
+            note += 3;
+
             output_sender
                 .try_send(OutputRequest::GateOff(things[i]))
                 .ok();

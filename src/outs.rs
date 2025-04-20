@@ -5,6 +5,8 @@ use rp_pico::hal::gpio::bank0::*;
 use rp_pico::hal::gpio::PinState;
 use rp_pico::hal::gpio::Pins;
 
+use crate::pwm_pair::{CvPair, SliceAB, SliceCD};
+
 #[derive(Copy, Clone)]
 pub enum Gate {
     BD,
@@ -93,28 +95,85 @@ impl GateMappings {
     }
 }
 
+/**
+- 1V = C1(1)= MIDI note 24 = 32.703 Hz
+- 3V = C3 = MIDI note 48 = 130.81 Hz
+ */
+
+fn note_to_voltage(key: u8) -> f32 {
+    return (key - 12) as f32 / 12.0;
+}
+
+#[derive(Copy, Clone)]
+pub enum Cv {
+    A,
+    B,
+    C,
+    D,
+}
+
+pub struct CvPorts {
+    pub ab_pair: CvPair<SliceAB>,
+    pub cd_pair: CvPair<SliceCD>,
+}
+
+impl CvPorts {
+    fn reset(&mut self) {
+        self.ab_pair.set_a(0.0);
+        self.ab_pair.set_b(0.0);
+        self.cd_pair.set_a(0.0);
+        self.cd_pair.set_b(0.0);
+    }
+
+    fn set_output(&mut self, cv: Cv, voltage: f32) -> Option<()> {
+        match cv {
+            Cv::A => self.ab_pair.set_a(voltage),
+            Cv::B => self.ab_pair.set_b(voltage),
+            Cv::C => self.cd_pair.set_b(voltage),
+            Cv::D => self.cd_pair.set_a(voltage),
+        }
+    }
+
+    fn set_note(&mut self, cv: Cv, note: u8) -> Option<()> {
+        self.set_output(cv, note_to_voltage(note))
+    }
+
+    fn set_val(&mut self, cv: Cv, val: f32) -> Option<()> {
+        self.set_output(cv, val * 5.0)
+    }
+}
+
 pub enum OutputRequest {
     GateOn(Gate),
     GateOff(Gate),
+    SetNote(Cv, u8),
+    SetVal(Cv, f32),
 }
 
 pub struct OutputHandler {
     gates: GateMappings,
+    ports: CvPorts,
 }
 
 impl OutputHandler {
-    pub fn new(mappings: GateMappings) -> Self {
-        return Self { gates: mappings };
+    pub fn new(gates: GateMappings, cv_ports: CvPorts) -> Self {
+        return Self {
+            gates,
+            ports: cv_ports,
+        };
     }
 
     pub fn reset(&mut self) {
-        self.gates.reset_all()
+        self.gates.reset_all();
+        self.ports.reset();
     }
 
     pub fn handle_message(&mut self, message: OutputRequest) -> Option<()> {
         match message {
             OutputRequest::GateOn(gate) => self.gates.set_state(gate, true),
             OutputRequest::GateOff(gate) => self.gates.set_state(gate, false),
+            OutputRequest::SetNote(port, note) => self.ports.set_note(port, note),
+            OutputRequest::SetVal(port, val) => self.ports.set_val(port, val),
         }
     }
 }
