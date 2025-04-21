@@ -6,8 +6,8 @@
 
 use panic_semihosting as _; // panic handler
 
+mod midi_mapper;
 mod outs;
-// mod pitched_channel;
 mod pwm_pair;
 
 use rtic_monotonics::rp2040::prelude::*;
@@ -230,11 +230,7 @@ mod midi_master {
     }
 
     #[task(priority=0, shared = [])]
-    async fn test_suite(
-        _c: test_suite::Context,
-        mut output_sender: MessageSender<OutputRequest>,
-        // mut uart_sender: MessageSender<heapless::String<256>>,
-    ) {
+    async fn test_suite(_c: test_suite::Context, mut output_sender: MessageSender<OutputRequest>) {
         // uart_sender.try_send(heapless::String::from("Testing")).ok();
         let things = [
             Gate::BD,
