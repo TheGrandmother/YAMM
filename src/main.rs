@@ -177,7 +177,8 @@ mod midi_master {
         output_handler.reset();
 
         let (output_sender, output_receiver) = make_channel!(OutputRequest, MESSAGE_CAPACITY);
-        let mut midi_mapper = MidiMapper::new(Config::four_poly(), output_sender.clone());
+
+        let mut midi_mapper = MidiMapper::new(Config::two_duo(), output_sender.clone());
 
         let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
             c.device.USBCTRL_REGS,

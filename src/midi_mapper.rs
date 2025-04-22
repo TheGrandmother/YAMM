@@ -100,6 +100,20 @@ impl Config {
             aftertouch: None,
         }
     }
+
+    pub fn two_duo() -> Self {
+        Config {
+            drum_channel: 5.into(),
+            port_mappings: [
+                Some([Some(Port::A), Some(Port::B), None, None]),
+                Some([None, None, Some(Port::C), Some(Port::D)]),
+                None,
+                None,
+            ],
+            vel_mappings: [None; 4],
+            aftertouch: None,
+        }
+    }
 }
 
 const CAPACITY: usize = 16;
