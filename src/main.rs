@@ -29,14 +29,15 @@ mod midi_master {
     use rp_pico::hal::gpio::PullDown;
     use rp_pico::hal::gpio::SioOutput;
     use rp_pico::hal::gpio::{DynPinId, FunctionSio};
+    use usb_device::device::StringDescriptors;
 
     use core::fmt::Write;
     use rtic_monotonics::rp2040::prelude::*;
 
-    // use usb_device;
-    // use usb_device::class_prelude::UsbBusAllocator;
-    // use usb_device::prelude::UsbDeviceBuilder;
-    // use usb_device::prelude::UsbVidPid;
+    use usb_device::class_prelude::UsbBusAllocator;
+    use usb_device::prelude::UsbDeviceBuilder;
+    use usb_device::prelude::UsbVidPid;
+    use usb_device::{self, LangID};
 
     use midly::{live::LiveEvent, MidiMessage};
 
@@ -45,6 +46,7 @@ mod midi_master {
     use hal::gpio;
     use hal::pwm;
 
+    use crate::midi_mapper::{Config, MidiMapper};
     use crate::outs::{Cv, CvPorts, Gate, GateMappings, OutputHandler, OutputRequest};
     use crate::pwm_pair::CvPair;
     use crate::Mono;
@@ -52,7 +54,7 @@ mod midi_master {
     const MESSAGE_CAPACITY: usize = 16;
     const PITCHED_CHANELL: midly::num::u4 = midly::num::u4::new(1);
     const DRUM_CHANELL: midly::num::u4 = midly::num::u4::new(5);
-    type MessageSender<T> = Sender<'static, T, MESSAGE_CAPACITY>;
+    pub type MessageSender<T> = Sender<'static, T, MESSAGE_CAPACITY>;
     type MessageReceiver<T> = Receiver<'static, T, MESSAGE_CAPACITY>;
     type UartType = hal::uart::UartPeripheral<
         hal::uart::Enabled,
@@ -80,7 +82,7 @@ mod midi_master {
 
     #[local]
     struct Local {
-        //     usb_bus: UsbBusAllocator<hal::usb::UsbBus>,
+        usb_bus: UsbBusAllocator<hal::usb::UsbBus>,
         uart_sender: MessageSender<heapless::String<256>>,
         watchdog: hal::Watchdog,
         uart: UartType,
@@ -88,6 +90,7 @@ mod midi_master {
         clock_high: bool,
         divide_clock: bool,
         output_handler: OutputHandler,
+        midi_mapper: MidiMapper,
     }
 
     #[shared]
@@ -173,14 +176,17 @@ mod midi_master {
         let mut output_handler = OutputHandler::new(gate_pins, cv_ports);
         output_handler.reset();
 
-        // let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
-        //     c.device.USBCTRL_REGS,
-        //     c.device.USBCTRL_DPRAM,
-        //     clocks.usb_clock,
-        //     true,
-        //     &mut resets,
-        // ));
-        //
+        let (output_sender, output_receiver) = make_channel!(OutputRequest, MESSAGE_CAPACITY);
+        let mut midi_mapper = MidiMapper::new(Config::four_poly(), output_sender.clone());
+
+        let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
+            c.device.USBCTRL_REGS,
+            c.device.USBCTRL_DPRAM,
+            clocks.usb_clock,
+            true,
+            &mut resets,
+        ));
+
         let divide_clock = pins.gpio2.into_pull_up_input().is_high().unwrap();
 
         // Set up UART on GP0 and GP1 (Pico pins 1 and 2)
@@ -203,21 +209,19 @@ mod midi_master {
             .unwrap();
         uart.enable_rx_interrupt();
 
-        let (uart_sender, _uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
-        let (midi_sender, _midi_receiver) = make_channel!(LiveEvent, MESSAGE_CAPACITY);
-        let (output_sender, output_receiver) = make_channel!(OutputRequest, MESSAGE_CAPACITY);
+        let (uart_sender, uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
+        let (midi_sender, midi_receiver) = make_channel!(LiveEvent, MESSAGE_CAPACITY);
 
         watchdog.start(fugit::ExtU32::micros(10_000));
         watchdog_feeder::spawn().ok();
-        // usb_handler::spawn(uart_receiver).ok();
-        // midi_handler::spawn(midi_receiver).ok();
-        test_suite::spawn(output_sender.clone() /*, uart_sender.clone()*/).ok();
+        usb_handler::spawn(uart_receiver).ok();
+        // test_suite::spawn(output_sender.clone() /*, uart_sender.clone()*/).ok();
         output_task::spawn(output_receiver /*, uart_sender.clone()*/).ok();
 
         return (
             Shared { led },
             Local {
-                //        usb_bus,
+                usb_bus,
                 uart_sender: uart_sender.clone(),
                 uart,
                 watchdog,
@@ -225,6 +229,7 @@ mod midi_master {
                 clock_high: false,
                 divide_clock,
                 output_handler,
+                midi_mapper,
             },
         );
     }
@@ -313,68 +318,12 @@ mod midi_master {
         }
     }
 
-    //  #[task(local = [drums, bus, midi_instance, divide_clock], shared=[])]
-    //  async fn midi_handler(c: midi_handler::Context, mut receiver: MessageReceiver<LiveEvent<'_>>) {
-    //      let mut clock_pulse_count: u16 = 0;
-    //      let ppq = 24;
-    //      let subdiv = match c.local.divide_clock {
-    //          true => ppq - 1,
-    //          false => 2,
-    //      }; // per quarter
-    //      loop {
-    //          match receiver.recv().await {
-    //              Ok(LiveEvent::Midi { channel, message }) => match channel {
-    //                  DRUM_CHANELL => match message {
-    //                      MidiMessage::NoteOn { key, vel: _ } => c.local.drums.set(key, true),
-    //                      MidiMessage::NoteOff { key, vel: _ } => c.local.drums.set(key, false),
-    //                      _ => {}
-    //                  },
-    //                  channel => match get_pitched_channel(c.local.midi_instance) {
-    //                      Some(thing) => match message {
-    //                          MidiMessage::NoteOn { key, vel: _ } => {
-    //                              thing.note_on(u8::from(key), channel.into())
-    //                          }
-    //                          MidiMessage::NoteOff { key, vel: _ } => {
-    //                              thing.note_off(u8::from(key), channel.into())
-    //                          }
-    //                          _ => {}
-    //                      },
-    //                      None => {}
-    //                  },
-    //              },
-    //              Ok(LiveEvent::Realtime(event_type)) => match event_type {
-    //                  midly::live::SystemRealtime::TimingClock => {
-    //                      c.local
-    //                          .bus
-    //                          .set(BusSignals::CLOCK, (clock_pulse_count % (subdiv)) == 0);
-    //                      if (clock_pulse_count % (subdiv)) == 0 {
-    //                          c.local.bus.set(BusSignals::STOP, false);
-    //                          c.local.bus.set(BusSignals::START, false);
-    //                      }
-    //                      clock_pulse_count = (clock_pulse_count + 1) % ppq;
-    //                  }
-    //                  midly::live::SystemRealtime::Stop => {
-    //                      get_pitched_channel(c.local.midi_instance)
-    //                          .unwrap()
-    //                          .all_notes_off();
-    //                      c.local.bus.set(BusSignals::CLOCK, false);
-    //                      c.local.bus.set(BusSignals::STOP, true);
-    //                  }
-    //                  midly::live::SystemRealtime::Start => c.local.bus.set(BusSignals::START, true),
-    //                  _ => {}
-    //              },
-    //              Ok(LiveEvent::Common(_)) => {}
-    //              Err(_) => {} // Errors are for the weak
-    //          }
-    //      }
-    //  }
-
-    #[task(local = [clock_high, uart_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
+    #[task(local = [midi_mapper, clock_high, uart_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
     fn uart(mut c: uart::Context) {
         let mut bob = [0u8; 32];
         if !c.local.uart.uart_is_readable() {
             let _ = c.local.uart_sender.try_send(heapless::String::from(
-                heapless::String::try_from("Shit aint readable").unwrap(),
+                heapless::String::try_from("aint readable").unwrap(),
             ));
             return;
         }
@@ -383,47 +332,25 @@ mod midi_master {
                 if bytes > 0 {
                     c.local.uart.write_raw(&bob).ok();
                 }
-                let mut i = 0;
-                while i < bytes {
-                    match LiveEvent::parse(&bob[i..]) {
-                        Ok(LiveEvent::Realtime(message)) => {
-                            // Ignoring Clocks and such for now
-                            match message {
-                                midly::live::SystemRealtime::TimingClock => {}
-                                _ => {}
+                let mut bytes_consumed = 0;
+                while bytes_consumed < bytes {
+                    match LiveEvent::parse(&bob[bytes_consumed..]) {
+                        Ok(event) => {
+                            match event {
+                                LiveEvent::Realtime(_) => bytes_consumed += 1,
+                                _ => bytes_consumed += 3,
                             }
-                            c.local
-                                .midi_sender
-                                .try_send(LiveEvent::Realtime(message))
-                                .ok();
-                            i += 1
+                            c.local.midi_mapper.handle_message(event)
                         }
-                        Ok(LiveEvent::Common(message)) => {
-                            //Ignoring comons for now
-                            let mut text: heapless::String<256> = heapless::String::new();
-                            write!(&mut text, "{:?}\n", message).ok();
-                            c.local.uart_sender.try_send(text).ok();
-                            i += 3;
-                        }
-                        Ok(LiveEvent::Midi { channel, message }) => {
-                            c.shared.led.lock(|l| l.set_high().unwrap());
-                            let mut text: heapless::String<256> = heapless::String::new();
-                            write!(&mut text, "C:{} {:?}\n", u8::from(channel) + 1, message).ok();
-                            c.local.uart_sender.try_send(text).ok();
-                            c.local
-                                .midi_sender
-                                .try_send(LiveEvent::Midi {
-                                    channel: midly::num::u4::from(u8::from(channel) + 1),
-                                    message,
-                                })
-                                .ok();
-                            i += 3;
-                        }
-                        Err(e) => {
-                            let mut text: heapless::String<256> = heapless::String::new();
-                            write!(&mut text, " {:?}", e).ok();
-                            c.local.uart_sender.try_send(text).ok();
-                            i += 1;
+                        Err(_) => {
+                            bytes_consumed += 1;
+                            c.shared.led.lock(|led| {
+                                if led.is_high().unwrap() {
+                                    led.set_low().unwrap()
+                                } else {
+                                    led.set_high().unwrap()
+                                }
+                            });
                         }
                     }
                 }
@@ -441,11 +368,65 @@ mod midi_master {
         };
     }
 
-    #[task(priority = 1, shared = [], local = [watchdog])]
+    #[task(priority = 2, shared = [], local = [watchdog])]
     async fn watchdog_feeder(c: watchdog_feeder::Context) {
         loop {
             c.local.watchdog.feed();
             Mono::delay(1000.micros()).await;
+        }
+    }
+
+    #[task(
+        priority = 1,
+        shared = [led],
+        local = [usb_bus],
+    )]
+    async fn usb_handler(
+        mut c: usb_handler::Context,
+        mut receiver: MessageReceiver<heapless::String<256>>,
+    ) {
+        let mut serial = usbd_serial::SerialPort::new(&c.local.usb_bus);
+        let mut usb_dev = UsbDeviceBuilder::new(&c.local.usb_bus, UsbVidPid(0x16c0, 0x27dd))
+            .strings(&[StringDescriptors::new(LangID::EN)
+                .manufacturer("Symbolic Circuits")
+                .product("Master module")])
+            .expect("Failed to set strings")
+            .device_class(2)
+            .build();
+
+        c.shared.led.lock(|l| l.set_high().ok());
+        while !usb_dev.poll(&mut [&mut serial]) {
+            Mono::delay(2000.micros()).await;
+        }
+        c.shared.led.lock(|l| l.set_low().ok());
+
+        let clear: heapless::String<256> = heapless::String::try_from("Mjau").unwrap();
+        let mut sent = false;
+        while !sent {
+            match serial.write(clear.as_bytes()) {
+                Ok(_) => sent = true,
+                Err(_) => (),
+            }
+            usb_dev.poll(&mut [&mut serial]);
+            Mono::delay(5000.micros()).await;
+        }
+
+        c.shared.led.lock(|l| l.set_high().ok());
+        Mono::delay(1000.millis()).await;
+        c.shared.led.lock(|l| l.set_low().ok());
+
+        loop {
+            match receiver.try_recv() {
+                Ok(text) => match serial.write(text.as_bytes()) {
+                    Ok(_) => 1,
+                    Err(_) => 1,
+                },
+                _ => 0,
+            };
+
+            usb_dev.poll(&mut [&mut serial]);
+
+            Mono::delay(7.millis()).await;
         }
     }
 }

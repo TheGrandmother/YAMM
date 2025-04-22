@@ -3,19 +3,16 @@ exports all
 definitions
 types
   Channel = nat
-  inv c == c < 4
+    inv c == c < 4
   ;
   Timestamp = nat;
   MidiEvent :: channel : nat type : token;
-
-  Port = token;
-
-  Config :: channels: set of Channel
-            drum_channel: Channel
-            port_mappings: map Channel to set of Port --maps channel to ports
-            vel_mappings: map Port to Port --maps ports to vel pair
-            aftertouch: [Port]
-            legato: bool
+  Port = <A>|<B>|<C>|<D>;
+  Config ::
+    channels: set of Channel
+    drum_channel: Channel
+    port_mappings: map Channel to set of Port
+    vel_mappings: map Port to Port    aftertouch: [Port]
   inv c ==
     c.drum_channel not in set c.channels and
     dom c.port_mappings = c.channels and
@@ -23,13 +20,12 @@ types
     rng c.vel_mappings \ dunion rng c.port_mappings = {}
   ;
 
-  TrackedMessage ::  msg: MidiEvent
-                    ts: nat
-                    port: Port
+  TrackedMessage ::
+    msg: MidiEvent
+    ts: nat --Not really time, order relative other messages
+    port: Port
   ord m1 < m2 == m1.ts < m2.ts 
   ;
-
-  Output = token;
 
   state Voices of
     config : Config
@@ -40,22 +36,46 @@ operations
   RECEIVE(e: MidiEvent)
   ext wr active_messages : set of TrackedMessage
       rd config : Config
-  post not(e.channel in set config.channels or e.channel = config.drum_channel) => active_messages = active_messages~;
+  post
+    not(e.channel in set config.channels or e.channel = config.drum_channel) =>
+    active_messages = active_messages~
+  ;
+
+  ADD_MESSAGE(tm: TrackedMessage)
+    ext wr active_messages : set of TrackedMessage
+        rd config : Config
+    pre forall msg in set active_messages & msg < tm
+    post tm in set active_messages
+  ;
+
+  remove_oldest()
+    ext wr active_messages : set of TrackedMessage
+    post
+    let
+      size_decreases =
+        active_messages~ <> {} =>
+          card active_messages < card active_messages~,
+
+      a_message_dissapears = exists msg in set active_messages~ &
+        msg not in set active_messages and
+        forall msg2 in set active_messages  & msg2 > msg
+    in
+      size_decreases and a_message_dissapears
+  ;
 
 functions
-
-remove_oldest(msgs: set of TrackedMessage) new_msgs : set of TrackedMessage
+find_port(msgs: set of TrackedMessage, assigned_ports: set of Port) port : Port
 post
-  msgs <> {} => card new_msgs < card msgs and
-  exists msg in set msgs & msg not in set new_msgs and forall msg2 in set new_msgs & msg2 > msg
-;
-
-
-find_oldest_port(msgs: set of TrackedMessage) port : Port
-post
-  exists oldest_msg in set msgs &
-    port = oldest_msg.port and
-    forall msg in set msgs & msg <> oldest_msg => oldest_msg < msg
+  let
+    free_port = exists candidate in set assigned_ports &
+      forall alloc in set {m.port | m in set msgs} &
+        alloc <> port => port = candidate
+    ,
+    oldest_port = exists oldest_msg in set msgs &
+      port = oldest_msg.port and
+      forall msg in set msgs & msg <> oldest_msg => oldest_msg < msg
+  in
+    free_port or oldest_port
 ;
 
 end Voices

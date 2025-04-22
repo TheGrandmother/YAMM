@@ -2,7 +2,7 @@
 name = "pico_test"
 version = "0.1.0"
 edition = "2021"
-runner = "elf2uf2-rs -d"
+runner = "elf2uf2-rs -ds"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
@@ -23,3 +23,5 @@ fugit = "0.3.7"
 
 panic-semihosting = "0.6.0"
 nb = "1.1.0"
+usb-device = "0.3.2"
+usbd-serial = "0.2.2"
