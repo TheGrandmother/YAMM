@@ -5,7 +5,7 @@ use midly::MidiMessage;
 use crate::midi_master::MessageSender;
 use crate::outs::{Cv, Gate, OutputRequest};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 enum Port {
     A,
     B,
@@ -87,6 +87,10 @@ impl Config {
         }
     }
 
+    fn get_vel_mapping(&mut self, port: Port) -> Option<Port> {
+        return self.vel_mappings[port.index()];
+    }
+
     pub fn four_poly() -> Self {
         Config {
             drum_channel: 5.into(),
@@ -114,6 +118,34 @@ impl Config {
             aftertouch: None,
         }
     }
+
+    pub fn two_mono() -> Self {
+        Config {
+            drum_channel: 5.into(),
+            port_mappings: [
+                Some([Some(Port::A), None, None, None]),
+                Some([None, None, Some(Port::C), None]),
+                None,
+                None,
+            ],
+            vel_mappings: [Some(Port::B), None, Some(Port::D), None],
+            aftertouch: None,
+        }
+    }
+
+    pub fn one_duo() -> Self {
+        Config {
+            drum_channel: 5.into(),
+            port_mappings: [
+                Some([Some(Port::A), Some(Port::B), None, None]),
+                None,
+                None,
+                None,
+            ],
+            vel_mappings: [Some(Port::C), Some(Port::D), None, None],
+            aftertouch: None,
+        }
+    }
 }
 
 const CAPACITY: usize = 16;
@@ -123,6 +155,7 @@ struct TrackedMessage {
     msg: MidiMessage,
     ts: u32,
     port: Port,
+    key: u7,
 }
 
 struct TrackedSet {
@@ -140,12 +173,13 @@ impl TrackedSet {
         }
     }
 
-    fn add(&mut self, msg: MidiMessage, port: Port) {
+    fn add(&mut self, msg: MidiMessage, key: u7, port: Port) {
         self.insertions += 1;
         let tm = TrackedMessage {
             msg,
             ts: self.insertions,
             port,
+            key,
         };
 
         self.port_age[tm.port.index()] += 1;
@@ -185,7 +219,12 @@ impl TrackedSet {
                 None => return,
             }
         }
-        self.active_messages[oldest_index] = None;
+        match self.active_messages[oldest_index] {
+            Some(TrackedMessage { port, .. }) => {
+                self.port_age[port.index()] = 0;
+            }
+            None => {}
+        }
     }
 
     fn find_port(&mut self, assigned_ports: PortMapping) -> Option<Port> {
@@ -206,6 +245,40 @@ impl TrackedSet {
             }
         }
         return oldest_port;
+    }
+
+    fn find_newest_by_port(&mut self, port: Port) -> Option<TrackedMessage> {
+        let mut newest_message = None;
+        let mut newest_ts = 0;
+        for tm in self.active_messages {
+            match tm {
+                Some(TrackedMessage {
+                    ts, port: port_, ..
+                }) => {
+                    if port_ == port && ts > newest_ts {
+                        newest_message = tm;
+                        newest_ts = ts;
+                    }
+                }
+                None => {}
+            }
+        }
+        return newest_message;
+    }
+
+    fn remove(&mut self, lifted_key: u7) -> Option<Port> {
+        for i in 0..CAPACITY {
+            let tm = self.active_messages[i];
+            match tm {
+                Some(TrackedMessage { key, port, .. }) if key == lifted_key => {
+                    self.active_messages[i] = None;
+                    self.port_age[port.index()] = 0;
+                    return Some(port);
+                }
+                _ => {}
+            }
+        }
+        return None;
     }
 }
 
@@ -238,11 +311,12 @@ impl MidiMapper {
     fn handle_pitched_channel(&mut self, msg: MidiMessage, ports: PortMapping) {
         match msg {
             MidiMessage::NoteOn { key, vel } => self.on_note_on(key, vel, msg, ports),
+            MidiMessage::NoteOff { key, vel } => self.on_note_off(key, vel),
             _ => {}
         }
     }
 
-    fn on_note_on(&mut self, key: u7, _vel: u7, msg: MidiMessage, ports: PortMapping) {
+    fn on_note_on(&mut self, key: u7, vel: u7, msg: MidiMessage, ports: PortMapping) {
         if self.tracked_messages.count() >= CAPACITY {
             self.tracked_messages.remove_oldest()
         }
@@ -250,10 +324,31 @@ impl MidiMapper {
         match self.tracked_messages.find_port(ports) {
             None => {}
             Some(port) => {
-                self.tracked_messages.add(msg, port);
+                self.tracked_messages.add(msg, key, port);
                 self.io_sender.try_send(port.make_set_note(key)).ok();
                 self.io_sender.try_send(port.make_gate_on()).ok();
+                match self.config.get_vel_mapping(port) {
+                    Some(port) => self
+                        .io_sender
+                        .try_send(port.make_set_val(vel.as_int() as f32 / 127.0))
+                        .ok(),
+                    None => None,
+                };
             }
+        }
+    }
+
+    fn on_note_off(&mut self, key: u7, _vel: u7) {
+        match self.tracked_messages.remove(key) {
+            Some(port) => match self.tracked_messages.find_newest_by_port(port) {
+                Some(tm) => {
+                    self.io_sender.try_send(port.make_set_note(tm.key)).ok();
+                }
+                None => {
+                    self.io_sender.try_send(port.make_gate_off()).ok();
+                }
+            },
+            None => {}
         }
     }
 }

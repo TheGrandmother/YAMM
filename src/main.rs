@@ -7,6 +7,7 @@
 use panic_semihosting as _; // panic handler
 
 mod midi_mapper;
+mod midi_size;
 mod outs;
 mod pwm_pair;
 
@@ -47,6 +48,7 @@ mod midi_master {
     use hal::pwm;
 
     use crate::midi_mapper::{Config, MidiMapper};
+    use crate::midi_size::event_length;
     use crate::outs::{Cv, CvPorts, Gate, GateMappings, OutputHandler, OutputRequest};
     use crate::pwm_pair::CvPair;
     use crate::Mono;
@@ -178,7 +180,7 @@ mod midi_master {
 
         let (output_sender, output_receiver) = make_channel!(OutputRequest, MESSAGE_CAPACITY);
 
-        let mut midi_mapper = MidiMapper::new(Config::two_duo(), output_sender.clone());
+        let midi_mapper = MidiMapper::new(Config::one_duo(), output_sender.clone());
 
         let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
             c.device.USBCTRL_REGS,
@@ -211,7 +213,7 @@ mod midi_master {
         uart.enable_rx_interrupt();
 
         let (uart_sender, uart_receiver) = make_channel!(heapless::String<256>, MESSAGE_CAPACITY);
-        let (midi_sender, midi_receiver) = make_channel!(LiveEvent, MESSAGE_CAPACITY);
+        let (midi_sender, _midi_receiver) = make_channel!(LiveEvent, MESSAGE_CAPACITY);
 
         watchdog.start(fugit::ExtU32::micros(10_000));
         watchdog_feeder::spawn().ok();
@@ -235,80 +237,6 @@ mod midi_master {
         );
     }
 
-    #[task(priority=0, shared = [])]
-    async fn test_suite(_c: test_suite::Context, mut output_sender: MessageSender<OutputRequest>) {
-        // uart_sender.try_send(heapless::String::from("Testing")).ok();
-        let things = [
-            Gate::BD,
-            Gate::Snare,
-            Gate::Clap,
-            Gate::ClosedHH,
-            Gate::OpenHH,
-            Gate::FX,
-            Gate::Accent,
-            Gate::GateA,
-            Gate::GateB,
-            Gate::GateC,
-            Gate::GateD,
-            Gate::Clock,
-            Gate::Start,
-            Gate::Stop,
-        ];
-        let mut i = 0;
-        let max = 14;
-        let channels = [Cv::A, Cv::B, Cv::C, Cv::D];
-        let mut channel = 0;
-        let mut note = 12;
-        loop {
-            if note > 12 * 6 {
-                note = 12;
-                channel += 1;
-            }
-            if channel == 4 {
-                output_sender
-                    .try_send(OutputRequest::SetVal(channels[0], 0.0))
-                    .ok();
-                output_sender
-                    .try_send(OutputRequest::SetVal(channels[1], 0.0))
-                    .ok();
-                output_sender
-                    .try_send(OutputRequest::SetVal(channels[2], 0.0))
-                    .ok();
-                output_sender
-                    .try_send(OutputRequest::SetVal(channels[3], 0.0))
-                    .ok();
-                channel = 0
-            }
-
-            output_sender
-                .try_send(OutputRequest::SetNote(channels[channel], note))
-                .ok();
-
-            note += 3;
-
-            output_sender
-                .try_send(OutputRequest::GateOff(things[i]))
-                .ok();
-            output_sender
-                .try_send(OutputRequest::GateOn(things[(i + 1) % 14]))
-                .ok();
-            output_sender
-                .try_send(OutputRequest::GateOn(things[(i + 2) % 14]))
-                .ok();
-            output_sender
-                .try_send(OutputRequest::GateOn(things[(i + 3) % 14]))
-                .ok();
-            output_sender
-                .try_send(OutputRequest::GateOn(things[(i + 4) % 14]))
-                .ok();
-            i += 1;
-            if i == max {
-                i = 0;
-            }
-            Mono::delay(300_00.micros()).await;
-        }
-    }
-
     #[task(local = [output_handler], shared=[])]
     async fn output_task(c: output_task::Context, mut receiver: MessageReceiver<OutputRequest>) {
         loop {
@@ -321,11 +249,8 @@ mod midi_master {
 
     #[task(local = [midi_mapper, clock_high, uart_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
     fn uart(mut c: uart::Context) {
-        let mut bob = [0u8; 32];
+        let mut bob = [0u8; 256];
         if !c.local.uart.uart_is_readable() {
-            let _ = c.local.uart_sender.try_send(heapless::String::from(
-                heapless::String::try_from("aint readable").unwrap(),
-            ));
             return;
         }
         match c.local.uart.read_raw(&mut bob) {
@@ -337,14 +262,10 @@ mod midi_master {
                 while bytes_consumed < bytes {
                     match LiveEvent::parse(&bob[bytes_consumed..]) {
                         Ok(event) => {
-                            match event {
-                                LiveEvent::Realtime(_) => bytes_consumed += 1,
-                                _ => bytes_consumed += 3,
-                            }
+                            bytes_consumed += event_length(event);
                             c.local.midi_mapper.handle_message(event)
                         }
                         Err(_) => {
-                            bytes_consumed += 1;
                             c.shared.led.lock(|led| {
                                 if led.is_high().unwrap() {
                                     led.set_low().unwrap()
@@ -352,6 +273,7 @@ mod midi_master {
                                     led.set_high().unwrap()
                                 }
                             });
+                            return;
                         }
                     }
                 }

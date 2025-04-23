@@ -29,42 +29,62 @@ types
 
   state Voices of
     config : Config
-    active_messages : set of TrackedMessage
+    tracked_messages : set of TrackedMessage
   end;
 
 operations
   RECEIVE(e: MidiEvent)
-  ext wr active_messages : set of TrackedMessage
+  ext wr tracked_messages : set of TrackedMessage
       rd config : Config
   post
     not(e.channel in set config.channels or e.channel = config.drum_channel) =>
-    active_messages = active_messages~
+    tracked_messages = tracked_messages~
   ;
 
   ADD_MESSAGE(tm: TrackedMessage)
-    ext wr active_messages : set of TrackedMessage
+    ext wr tracked_messages : set of TrackedMessage
         rd config : Config
-    pre forall msg in set active_messages & msg < tm
-    post tm in set active_messages
+    pre forall msg in set tracked_messages & msg < tm
+    post tm in set tracked_messages
   ;
 
   remove_oldest()
-    ext wr active_messages : set of TrackedMessage
+    ext wr tracked_messages : set of TrackedMessage
     post
     let
       size_decreases =
-        active_messages~ <> {} =>
-          card active_messages < card active_messages~,
+        tracked_messages~ <> {} =>
+          card tracked_messages < card tracked_messages~,
 
-      a_message_dissapears = exists msg in set active_messages~ &
-        msg not in set active_messages and
-        forall msg2 in set active_messages  & msg2 > msg
+      a_message_dissapears = exists msg in set tracked_messages~ &
+        msg not in set tracked_messages and
+        forall msg2 in set tracked_messages  & msg2 > msg
     in
       size_decreases and a_message_dissapears
   ;
 
+  remove(msg: MidiEvent)
+    ext wr tracked_messages : set of TrackedMessage
+    post
+      msg not in set {tm.msg | tm in set tracked_messages}
+  ;
+
 functions
 find_port(msgs: set of TrackedMessage, assigned_ports: set of Port) port : Port
+post
+  let
+    free_port = exists candidate in set assigned_ports &
+      forall alloc in set {m.port | m in set msgs} &
+        alloc <> port => port = candidate
+    ,
+    oldest_port = exists oldest_msg in set msgs &
+      port = oldest_msg.port and
+      forall msg in set msgs & msg <> oldest_msg => oldest_msg < msg
+  in
+    free_port or oldest_port
+;
+
+find_newest(msgs: set of TrackedMessage, assigned_ports: set of Port) port : Port
 post
   let
     free_port = exists candidate in set assigned_ports &

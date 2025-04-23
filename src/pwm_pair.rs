@@ -71,7 +71,7 @@ where
         if voltage > 5.0 {
             duty = self.max_duty;
         } else if voltage < 0.0 {
-            duty = 0
+            duty = 1
         } else {
             duty = (self.max_duty as f32 * voltage / 5.0) as u16;
         }
