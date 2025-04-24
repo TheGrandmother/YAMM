@@ -9,7 +9,7 @@ use crate::pwm_pair::{CvPair, SliceAB, SliceCD};
 
 #[derive(Copy, Clone)]
 pub enum Gate {
-    BD,
+    Kick,
     OpenHH,
     Clap,
     Snare,
@@ -26,7 +26,7 @@ pub enum Gate {
 }
 
 pub struct GateMappings {
-    pub bd: gpio::Pin<Gpio27, gpio::FunctionSioOutput, gpio::PullDown>,
+    pub kick: gpio::Pin<Gpio27, gpio::FunctionSioOutput, gpio::PullDown>,
     pub open_hh: gpio::Pin<Gpio7, gpio::FunctionSioOutput, gpio::PullDown>,
     pub clap: gpio::Pin<Gpio9, gpio::FunctionSioOutput, gpio::PullDown>,
     pub snare: gpio::Pin<Gpio10, gpio::FunctionSioOutput, gpio::PullDown>,
@@ -50,7 +50,7 @@ impl GateMappings {
         self.open_hh.set_low().unwrap();
         self.clap.set_low().unwrap();
         self.snare.set_low().unwrap();
-        self.bd.set_low().unwrap();
+        self.kick.set_low().unwrap();
         self.fx.set_low().unwrap();
         self.accent.set_low().unwrap();
         self.closed_hh.set_low().unwrap();
@@ -77,7 +77,7 @@ impl GateMappings {
 
     pub(crate) fn set_state(&mut self, gate: Gate, state: bool) -> Option<()> {
         match gate {
-            Gate::BD => self.bd.set_state(V2PinState::from(state)).ok(),
+            Gate::Kick => self.kick.set_state(V2PinState::from(state)).ok(),
             Gate::OpenHH => self.open_hh.set_state(V2PinState::from(state)).ok(),
             Gate::Clap => self.clap.set_state(V2PinState::from(state)).ok(),
             Gate::Snare => self.snare.set_state(V2PinState::from(state)).ok(),

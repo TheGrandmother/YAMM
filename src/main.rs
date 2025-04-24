@@ -147,7 +147,7 @@ mod midi_master {
             open_hh: pins.gpio7.into_push_pull_output(),
             clap: pins.gpio9.into_push_pull_output(),
             snare: pins.gpio10.into_push_pull_output(),
-            bd: pins.gpio27.into_push_pull_output(),
+            kick: pins.gpio27.into_push_pull_output(),
             fx: pins.gpio6.into_push_pull_output(),
             accent: pins.gpio5.into_push_pull_output(),
             closed_hh: pins.gpio8.into_push_pull_output(),
@@ -266,6 +266,7 @@ mod midi_master {
                             c.local.midi_mapper.handle_message(event)
                         }
                         Err(_) => {
+                            c.local.midi_mapper.all_notes_off();
                             c.shared.led.lock(|led| {
                                 if led.is_high().unwrap() {
                                     led.set_low().unwrap()
@@ -280,6 +281,7 @@ mod midi_master {
             }
             Err(Error::WouldBlock) => {}
             Err(Error::Other(_)) => {
+                c.local.midi_mapper.all_notes_off();
                 c.shared.led.lock(|led| {
                     if led.is_high().unwrap() {
                         led.set_low().unwrap()

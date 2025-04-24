@@ -23,19 +23,19 @@ impl Port {
         }
     }
 
-    fn make_set_note(self, key: u7) -> OutputRequest {
+    fn request_set_note(self, key: u7) -> OutputRequest {
         return OutputRequest::SetNote(self.to_output_cv(), key.into());
     }
 
-    fn make_set_val(self, val: f32) -> OutputRequest {
+    fn request_set_val(self, val: f32) -> OutputRequest {
         return OutputRequest::SetVal(self.to_output_cv(), val);
     }
 
-    fn make_gate_on(self) -> OutputRequest {
+    fn request_gate_on(self) -> OutputRequest {
         return OutputRequest::GateOn(self.to_output_gate());
     }
 
-    fn make_gate_off(self) -> OutputRequest {
+    fn request_gate_off(self) -> OutputRequest {
         return OutputRequest::GateOff(self.to_output_gate());
     }
 
@@ -71,6 +71,7 @@ pub struct Config {
     port_mappings: [Option<PortMapping>; 4], // Maps channels to ports
     vel_mappings: [Option<Port>; 4],         // Maps pitch ports to vel ports by index
     aftertouch: Option<Port>,
+    mod_port: Option<Port>,
 }
 
 impl Config {
@@ -93,7 +94,7 @@ impl Config {
 
     pub fn four_poly() -> Self {
         Config {
-            drum_channel: 5.into(),
+            drum_channel: 4.into(),
             port_mappings: [
                 Some([Some(Port::A), Some(Port::B), Some(Port::C), Some(Port::D)]),
                 None,
@@ -102,12 +103,13 @@ impl Config {
             ],
             vel_mappings: [None; 4],
             aftertouch: None,
+            mod_port: None,
         }
     }
 
     pub fn two_duo() -> Self {
         Config {
-            drum_channel: 5.into(),
+            drum_channel: 4.into(),
             port_mappings: [
                 Some([Some(Port::A), Some(Port::B), None, None]),
                 Some([None, None, Some(Port::C), Some(Port::D)]),
@@ -116,12 +118,13 @@ impl Config {
             ],
             vel_mappings: [None; 4],
             aftertouch: None,
+            mod_port: None,
         }
     }
 
     pub fn two_mono() -> Self {
         Config {
-            drum_channel: 5.into(),
+            drum_channel: 4.into(),
             port_mappings: [
                 Some([Some(Port::A), None, None, None]),
                 Some([None, None, Some(Port::C), None]),
@@ -130,12 +133,13 @@ impl Config {
             ],
             vel_mappings: [Some(Port::B), None, Some(Port::D), None],
             aftertouch: None,
+            mod_port: None,
         }
     }
 
     pub fn one_duo() -> Self {
         Config {
-            drum_channel: 5.into(),
+            drum_channel: 4.into(),
             port_mappings: [
                 Some([Some(Port::A), Some(Port::B), None, None]),
                 None,
@@ -144,6 +148,7 @@ impl Config {
             ],
             vel_mappings: [Some(Port::C), Some(Port::D), None, None],
             aftertouch: None,
+            mod_port: None,
         }
     }
 }
@@ -300,7 +305,11 @@ impl MidiMapper {
     pub fn handle_message(&mut self, msg: LiveEvent) {
         match msg {
             LiveEvent::Midi { channel, message } => match self.config.get_channel_type(channel) {
-                ChannelType::Drumms => {}
+                ChannelType::Drumms => match message {
+                    MidiMessage::NoteOff { key, vel } => self.on_drumm(key, vel, false),
+                    MidiMessage::NoteOn { key, vel } => self.on_drumm(key, vel, true),
+                    _ => {}
+                },
                 ChannelType::Pitch(ports) => self.handle_pitched_channel(message, ports),
                 ChannelType::None => {}
             },
@@ -312,7 +321,23 @@ impl MidiMapper {
         match msg {
             MidiMessage::NoteOn { key, vel } => self.on_note_on(key, vel, msg, ports),
             MidiMessage::NoteOff { key, vel } => self.on_note_off(key, vel),
+            MidiMessage::Controller { controller, value } => match controller.as_int() {
+                1 => self.on_modwheel(value),
+                123 => self.all_notes_off(),
+                _ => {}
+            },
             _ => {}
+        }
+    }
+
+    fn on_modwheel(&mut self, value: u7) {
+        match self.config.mod_port {
+            Some(port) => {
+                self.io_sender
+                    .try_send(port.request_set_val(value.as_int() as f32 / 127.0))
+                    .ok();
+            }
+            None => {}
         }
     }
 
@@ -325,12 +350,12 @@ impl MidiMapper {
             None => {}
             Some(port) => {
                 self.tracked_messages.add(msg, key, port);
-                self.io_sender.try_send(port.make_set_note(key)).ok();
-                self.io_sender.try_send(port.make_gate_on()).ok();
+                self.io_sender.try_send(port.request_set_note(key)).ok();
+                self.io_sender.try_send(port.request_gate_on()).ok();
                 match self.config.get_vel_mapping(port) {
                     Some(port) => self
                         .io_sender
-                        .try_send(port.make_set_val(vel.as_int() as f32 / 127.0))
+                        .try_send(port.request_set_val(vel.as_int() as f32 / 127.0))
                         .ok(),
                     None => None,
                 };
@@ -342,12 +367,47 @@ impl MidiMapper {
         match self.tracked_messages.remove(key) {
             Some(port) => match self.tracked_messages.find_newest_by_port(port) {
                 Some(tm) => {
-                    self.io_sender.try_send(port.make_set_note(tm.key)).ok();
+                    self.io_sender.try_send(port.request_set_note(tm.key)).ok();
                 }
                 None => {
-                    self.io_sender.try_send(port.make_gate_off()).ok();
+                    self.io_sender.try_send(port.request_gate_off()).ok();
                 }
             },
+            None => {}
+        }
+    }
+
+    /*UNSURE*/
+    pub fn all_notes_off(&mut self) {
+        for tm in self.tracked_messages.active_messages {
+            match tm {
+                Some(TrackedMessage { port, .. }) => {
+                    self.io_sender.try_send(port.request_gate_off()).ok();
+                }
+                None => {}
+            }
+        }
+        self.tracked_messages = TrackedSet::new()
+    }
+
+    pub fn on_drumm(&mut self, note: u7, _vel: u7, state: bool) {
+        let gate = match note.as_int() % 12 {
+            0 => Some(Gate::Kick),     // C
+            2 => Some(Gate::Snare),    // D
+            4 => Some(Gate::Clap),     // E
+            5 => Some(Gate::ClosedHH), // F
+            7 => Some(Gate::OpenHH),   // G
+            9 => Some(Gate::FX),       // A
+            11 => Some(Gate::Accent),  // B
+            _ => None,
+        };
+        match gate {
+            Some(g) => {
+                match state {
+                    true => self.io_sender.try_send(OutputRequest::GateOn(g)).ok(),
+                    false => self.io_sender.try_send(OutputRequest::GateOff(g)).ok(),
+                };
+            }
             None => {}
         }
     }
