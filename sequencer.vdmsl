@@ -1,78 +1,80 @@
+values
+  subs_per_step: Ticks = 128
 types
 
-  -- Midi clock count
-  Timestamp = nat;
-  MidiEvent :: ts : Timestamp;
-  Sequence = set of MidiEvent;
-  State = <playing> | <stop>;
+  Ticks = nat; -- Midi Pulses
+  TimeStamp ::
+    step : nat
+    sub: nat
+  inv mk_TimeStamp(-, sub) == sub < subs_per_step
+  ord t1 < t2 == t1.step < t2.step or t1.step = t2.step and t1.sub < t2.sub
+  ; 
 
-  -- There is one player per channel.
-  -- Add a divisor for extending patterns
+  MidiMessage = token;
+  Event :: msg : MidiMessage ts: TimeStamp;
+  Sequence = set of Event;
+  State = <playing> | <stop>;
+  -- Division = <whole> | <half> | <quarter>| <eigth>| <sixtenth>
+
   state Player of
-    pointer : Timestamp
-    sequence : Sequence
-    player_state : State
-    length : Timestamp
-  init s == s = mk_Player(0, {}, <stop>, 0)
-  inv s ==
-    let
-      all_in_bounds = forall me in set s.sequence & me.ts <= s.length
-    in
-      all_in_bounds
-  end;
+    length: nat
+    ts: TimeStamp
+    clock: Ticks
+    pps: Ticks -- Pulses per step
+    sequence: Sequence
+    player_state: State
+  inv p == p.ts.step < p.length
+  end
 
 operations
-  TICK(dt: Timestamp) emitted: set of MidiEvent
-  ext wr pointer : Timestamp
-      rd sequence : Sequence
-      rd player_state : State
-      rd length : Timestamp
-  post cases player_state:
-    <stop> -> emitted = {} and pointer~ = pointer,
-    <playing> ->
-      pointer = (pointer~ + dt) rem length and
-      forall e in set emitted &
-        e in set sequence and
-        pointer~ < e.ts and (e.ts < pointer or e.ts < pointer~ + dt)
-  end;
 
-  PLAY()
-  ext wr player_state : State
-  post player_state = <playing>;
+TICK() emitted: set of Event
+ext wr clock : Ticks
+    wr ts: TimeStamp
+    rd sequence : Sequence
+    rd player_state : State
+post
+  cases player_state:
+    <playing> -> (
+      clock = clock~ + 1 and
+      ts = get_ts() and
+      emitted = get_emitted(ts~, ts)
+    ),
+    <playing> -> (
+      clock = clock~ and
+      ts = ts~ and
+      emitted = {}
+    )
+  end
+;
 
-  STOP()
-  ext wr player_state : State
-      wr pointer      : Timestamp
-  post player_state = <stop> and pointer = 0;
+START()
+ext wr player_state : State
+post
+  player_state = <playing>
+;
 
-  INSERT(event: MidiEvent)
-  ext wr sequence : Sequence
-  post event in set sequence;
+STOP()
+ext wr player_state : State
+    wr clock : Ticks
+    wr ts : TimeStamp
+post
+  player_state = <stop> and clock = 0 and ts = mk_TimeStamp(0,0)
+;
 
-  STEP(step: Timestamp)
-  ext wr pointer : Timestamp
-  post pointer = pointer~ + step;
+pure get_ts() new_ts: TimeStamp
+post
+  (new_ts.step = (clock / pps) rem length) and
+  (new_ts.sub = ((clock rem pps) * subs_per_step / pps))
+;
 
-  DELETE(e: MidiEvent)
-  ext wr sequence : Sequence
-  post forall me in set sequence~ & matches(e, me) => not(me in set sequence);
-
+pure get_emitted(old_ts: TimeStamp, new_ts: TimeStamp) emitted: set of Event
+pre old_ts <= new_ts
+post
+  forall e in set sequence & (e.ts > old_ts and e.ts <= new_ts) => e in set emitted
+;
 
 functions
-  /*
-    Tricky problem:
-    How do we replace a message.
-    We would need to replace a message.
-    We must also possibly delete any related events like a note off
-    If I allow for microtiming identifying the event to replace will be tricky.
-      We then cannot compare the timestamps directly as the same "intended event" may have different timestamps.
-    We could resolve this by having the micro timing be a separate field and thus idinitify based on timestamp.
-  */
-  matches(m1: MidiEvent, m2: MidiEvent) res : bool
-  post m1 = m2 => res;
 
-  isOn(e: MidiEvent) res: bool
-  post undefined;
-
-  isOff(e: MidiEvent) res: bool
-  post undefined;
+get_pps(divisor: nat, ppq: Ticks) pps: Ticks
+post pps = ppq * divisor*4;

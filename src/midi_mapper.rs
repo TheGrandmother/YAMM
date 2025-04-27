@@ -1,9 +1,12 @@
 use midly::live::LiveEvent;
 use midly::num::{u4, u7};
 use midly::MidiMessage;
+use rtic_monotonics::rp2040::prelude::*;
 
 use crate::midi_master::MessageSender;
 use crate::outs::{Cv, Gate, OutputRequest};
+use crate::Mono;
+use fugit::Duration;
 
 #[derive(Copy, Clone, PartialEq)]
 enum Port {
@@ -291,6 +294,9 @@ pub struct MidiMapper {
     tracked_messages: TrackedSet,
     config: Config,
     io_sender: MessageSender<OutputRequest>,
+    clock: u32,
+    ppq: u32,
+    divisor: u32, //At what interval do we emit a clock pulse
 }
 
 impl MidiMapper {
@@ -299,10 +305,13 @@ impl MidiMapper {
             tracked_messages: TrackedSet::new(),
             config,
             io_sender,
+            clock: 0,
+            ppq: 24,
+            divisor: 16,
         }
     }
 
-    pub fn handle_message(&mut self, msg: LiveEvent) {
+    pub async fn handle_message(&mut self, msg: LiveEvent<'static>) {
         match msg {
             LiveEvent::Midi { channel, message } => match self.config.get_channel_type(channel) {
                 ChannelType::Drumms => match message {
@@ -314,9 +323,37 @@ impl MidiMapper {
                 ChannelType::None => {}
             },
             LiveEvent::Common(_) => {}
-            LiveEvent::Realtime(_) => {}
+            LiveEvent::Realtime(msg) => match msg {
+                midly::live::SystemRealtime::TimingClock => self.tick().await,
+                midly::live::SystemRealtime::Start => self.flash_gate(Gate::Start).await,
+                midly::live::SystemRealtime::Continue => self.flash_gate(Gate::Start).await,
+                midly::live::SystemRealtime::Stop => {
+                    self.flash_gate(Gate::Stop).await;
+                    self.all_notes_off();
+                }
+                midly::live::SystemRealtime::Reset => {
+                    self.all_notes_off();
+                    self.flash_gate(Gate::Stop).await;
+                    self.flash_gate(Gate::Start).await;
+                }
+                _ => {}
+            },
         }
     }
+
+    async fn flash_gate(&mut self, gate: Gate) {
+        self.io_sender.send(OutputRequest::GateOn(gate)).await.ok();
+        Mono::delay(50.millis()).await;
+        self.io_sender.send(OutputRequest::GateOff(gate)).await.ok();
+    }
+
+    async fn tick(&mut self) {
+        if (self.clock % ((self.ppq * 4) / self.divisor)) == 0 {
+            self.flash_gate(Gate::Clock).await;
+        }
+        self.clock += 1;
+    }
+
     fn handle_pitched_channel(&mut self, msg: MidiMessage, ports: PortMapping) {
         match msg {
             MidiMessage::NoteOn { key, vel } => self.on_note_on(key, vel, msg, ports),
