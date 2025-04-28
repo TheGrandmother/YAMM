@@ -6,6 +6,7 @@
 
 use panic_semihosting as _; // panic handler
 
+mod commando_unit;
 mod midi_mapper;
 mod midi_size;
 mod outs;
@@ -16,7 +17,7 @@ use rtic_monotonics::rp2040::prelude::*;
 
 rp2040_timer_monotonic!(Mono);
 
-#[rtic::app(device = rp_pico::hal::pac, dispatchers = [SW0_IRQ, SW1_IRQ, SW2_IRQ])]
+#[rtic::app(device = rp_pico::hal::pac, dispatchers = [SW0_IRQ, SW1_IRQ, SW2_IRQ, SW3_IRQ])]
 mod midi_master {
     use ::nb::Error;
     use embedded_hal::can::nb;
@@ -48,6 +49,7 @@ mod midi_master {
 
     use hal::pwm;
 
+    use crate::commando_unit::{CommandEvent, CommandoUnit, Input, Operation};
     use crate::midi_mapper::{Config, MidiMapper};
     use crate::midi_size::event_length;
     use crate::outs::{Cv, CvPorts, Gate, GateMappings, OutputHandler, OutputRequest};
@@ -94,9 +96,12 @@ mod midi_master {
         output_handler: OutputHandler,
         midi_mapper: MidiMapper,
         button: Pin<gpio::bank0::Gpio11, gpio::FunctionSioInput, gpio::PullUp>,
-        gpio_player_sender: MessageSender<PlayerAction>,
+        commando_player_sender: MessageSender<PlayerAction>,
         uart_player_sender: MessageSender<PlayerAction>,
+        gpio_command_sender: MessageSender<CommandEvent>,
+        uart_command_sender: MessageSender<CommandEvent>,
         player: Player,
+        commando: CommandoUnit,
     }
 
     #[shared]
@@ -223,10 +228,13 @@ mod midi_master {
 
         let (midi_sender, midi_receiver) = make_channel!(LiveEvent<'static>, MESSAGE_CAPACITY);
         let (player_sender, player_receiver) = make_channel!(PlayerAction, MESSAGE_CAPACITY);
+        let (commando_sender, command_receiver) = make_channel!(CommandEvent, MESSAGE_CAPACITY);
 
         let midi_mapper = MidiMapper::new(Config::one_duo(), output_sender.clone());
         let mut player = Player::new(0, 8, 2, midi_sender.clone(), output_sender.clone());
 
+        let commando = CommandoUnit::new();
+
         player.insert(
             LiveEvent::Midi {
                 channel: 0.into(),
@@ -275,10 +283,11 @@ mod midi_master {
             0.5,
         );
 
-        watchdog.start(fugit::ExtU32::micros(10_000));
+        watchdog.start(fugit::ExtU32::micros(50_000));
         watchdog_feeder::spawn().ok();
         // usb_handler::spawn(uart_receiver).ok();
         // test_suite::spawn(output_sender.clone()).ok();
+        command_handler::spawn(command_receiver).ok();
         output_task::spawn(output_receiver).ok();
         midi_handler::spawn(midi_receiver).ok();
         player_handler::spawn(player_receiver).ok();
@@ -297,18 +306,23 @@ mod midi_master {
                 output_handler,
                 midi_mapper,
                 button: play_btn,
-                gpio_player_sender: player_sender.clone(),
+                commando_player_sender: player_sender.clone(),
                 uart_player_sender: player_sender.clone(),
                 player,
+                gpio_command_sender: commando_sender.clone(),
+                uart_command_sender: commando_sender.clone(),
+                commando,
             },
         );
     }
 
-    #[task(priority=1, local = [output_handler], shared=[led])]
+    #[task(priority=3, local = [output_handler], shared=[led])]
     async fn output_task(c: output_task::Context, mut receiver: MessageReceiver<OutputRequest>) {
         loop {
             match receiver.recv().await {
-                Ok(req) => c.local.output_handler.handle_message(req).unwrap(),
+                Ok(req) => {
+                    c.local.output_handler.handle_message(req);
+                }
                 Err(_) => {}
             }
         }
@@ -327,7 +341,35 @@ mod midi_master {
         }
     }
 
-    #[task(priority=1, local = [player], shared=[led])]
+    #[task(priority=1, local = [commando_player_sender, commando], shared=[led])]
+    async fn command_handler(
+        c: command_handler::Context,
+        mut receiver: MessageReceiver<CommandEvent>,
+    ) {
+        loop {
+            // FOR SOME HORRID REASON I CANNOT USE ASYNC HERE!?
+            match receiver.try_recv() {
+                Ok(event) => {
+                    match c.local.commando.handle_event(event) {
+                        Some(op) => match op {
+                            Operation::Audit => {
+                                c.local
+                                    .commando_player_sender
+                                    .try_send(PlayerAction::Play)
+                                    .ok();
+                            }
+                            _ => {}
+                        },
+                        None => {}
+                    };
+                }
+                Err(_) => {}
+            }
+            Mono::delay(10.millis()).await;
+        }
+    }
+
+    #[task(priority=2, local = [player], shared=[led])]
     async fn player_handler(
         c: player_handler::Context,
         mut receiver: MessageReceiver<PlayerAction>,
@@ -341,36 +383,27 @@ mod midi_master {
     }
 
     // TODO: Cloning of output sender casues memory leak.
-    #[task(local=[gpio_player_sender, button], shared=[&output_sender, led], binds=IO_IRQ_BANK0 )]
-    fn gpio_handler(mut c: gpio_handler::Context) {
-        c.shared.led.lock(|led| {
-            if led.is_high().unwrap() {
-                led.set_low().unwrap()
-            } else {
-                led.set_high().unwrap()
-            }
-        });
-
+    #[task(local=[gpio_command_sender, button], shared=[&output_sender, led], binds=IO_IRQ_BANK0 )]
+    fn gpio_handler(c: gpio_handler::Context) {
         if c.local.button.interrupt_status(Interrupt::EdgeLow) {
-            c.shared
-                .output_sender
+            c.local
+                .gpio_command_sender
                 .clone()
-                .try_send(OutputRequest::GateOff(Gate::Clock))
+                .try_send(CommandEvent::Down(Input::Play))
                 .ok();
             c.local.button.clear_interrupt(Interrupt::EdgeLow);
         }
         if c.local.button.interrupt_status(Interrupt::EdgeHigh) {
-            c.shared
-                .output_sender
+            c.local
+                .gpio_command_sender
                 .clone()
-                .try_send(OutputRequest::GateOn(Gate::Clock))
+                .try_send(CommandEvent::Up(Input::Play))
                 .ok();
             c.local.button.clear_interrupt(Interrupt::EdgeHigh);
-            c.local.gpio_player_sender.try_send(PlayerAction::Play).ok();
         }
     }
 
-    #[task(local = [uart_player_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
+    #[task(local = [uart_player_sender, uart_command_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
     fn uart(mut c: uart::Context) {
         let mut bob = [0u8; 256];
         if !c.local.uart.uart_is_readable() {
@@ -388,6 +421,22 @@ mod midi_master {
                             bytes_consumed += event_length(event);
                             c.local.midi_sender.try_send(event.to_static()).ok();
                             match event {
+                                LiveEvent::Midi { message, .. } => match message {
+                                    MidiMessage::NoteOn { key, .. } => {
+                                        c.local
+                                            .uart_command_sender
+                                            .try_send(CommandEvent::Down(Input::Key(key.into())))
+                                            .ok();
+                                    }
+                                    MidiMessage::NoteOff { key, .. } => {
+                                        c.local
+                                            .uart_command_sender
+                                            .try_send(CommandEvent::Up(Input::Key(key.into())))
+                                            .ok();
+                                    }
+                                    _ => {}
+                                },
+
                                 LiveEvent::Realtime(msg) => match msg {
                                     midly::live::SystemRealtime::TimingClock => {
                                         c.local
@@ -426,11 +475,11 @@ mod midi_master {
         };
     }
 
-    #[task(priority = 3, shared = [], local = [watchdog])]
+    #[task(priority = 4, shared = [], local = [watchdog])]
     async fn watchdog_feeder(c: watchdog_feeder::Context) {
         loop {
             c.local.watchdog.feed();
-            Mono::delay(1000.micros()).await;
+            Mono::delay(1_000.micros()).await;
         }
     }
 }
