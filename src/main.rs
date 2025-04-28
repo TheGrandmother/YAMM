@@ -6,6 +6,7 @@
 
 use panic_semihosting as _; // panic handler
 
+mod button_handler;
 mod commando_unit;
 mod midi_mapper;
 mod midi_size;
@@ -49,6 +50,7 @@ mod midi_master {
 
     use hal::pwm;
 
+    use crate::button_handler::ButtonHandler;
     use crate::commando_unit::{CommandEvent, CommandoUnit, Input, Operation};
     use crate::midi_mapper::{Config, MidiMapper};
     use crate::midi_size::event_length;
@@ -95,13 +97,12 @@ mod midi_master {
         divide_clock: bool,
         output_handler: OutputHandler,
         midi_mapper: MidiMapper,
-        button: Pin<gpio::bank0::Gpio11, gpio::FunctionSioInput, gpio::PullUp>,
         commando_player_sender: MessageSender<PlayerAction>,
         uart_player_sender: MessageSender<PlayerAction>,
-        gpio_command_sender: MessageSender<CommandEvent>,
         uart_command_sender: MessageSender<CommandEvent>,
         player: Player,
         commando: CommandoUnit,
+        button_handler: ButtonHandler,
     }
 
     #[shared]
@@ -200,11 +201,11 @@ mod midi_master {
 
         let divide_clock = pins.gpio2.into_pull_up_input().is_high().unwrap();
 
-        let mut play_btn = pins.gpio11.into_pull_up_input();
-        play_btn.set_interrupt_enabled(Interrupt::EdgeLow, true);
-        play_btn.set_interrupt_enabled(Interrupt::EdgeHigh, true);
-        play_btn.clear_interrupt(Interrupt::EdgeLow);
-        play_btn.clear_interrupt(Interrupt::EdgeHigh);
+        // let mut play_btn = pins.gpio11.into_pull_up_input();
+        // play_btn.set_interrupt_enabled(Interrupt::EdgeLow, true);
+        // play_btn.set_interrupt_enabled(Interrupt::EdgeHigh, true);
+        // play_btn.clear_interrupt(Interrupt::EdgeLow);
+        // play_btn.clear_interrupt(Interrupt::EdgeHigh);
 
         // Set up UART on GP0 and GP1 (Pico pins 1 and 2)
         let uart_pins = (
@@ -234,6 +235,13 @@ mod midi_master {
         let mut player = Player::new(0, 8, 2, midi_sender.clone(), output_sender.clone());
 
         let commando = CommandoUnit::new();
+        let mut button_handler = ButtonHandler {
+            play_btn: pins.gpio11.reconfigure(),
+            step_btn: pins.gpio12.reconfigure(),
+            rec_btn: pins.gpio13.reconfigure(),
+            commando_sender: commando_sender.clone(),
+        };
+        button_handler.init();
 
         player.insert(
             LiveEvent::Midi {
@@ -305,13 +313,12 @@ mod midi_master {
                 divide_clock,
                 output_handler,
                 midi_mapper,
-                button: play_btn,
                 commando_player_sender: player_sender.clone(),
                 uart_player_sender: player_sender.clone(),
                 player,
-                gpio_command_sender: commando_sender.clone(),
                 uart_command_sender: commando_sender.clone(),
                 commando,
+                button_handler,
             },
         );
     }
@@ -343,13 +350,20 @@ mod midi_master {
 
     #[task(priority=1, local = [commando_player_sender, commando], shared=[led])]
     async fn command_handler(
-        c: command_handler::Context,
+        mut c: command_handler::Context,
         mut receiver: MessageReceiver<CommandEvent>,
     ) {
         loop {
             // FOR SOME HORRID REASON I CANNOT USE ASYNC HERE!?
             match receiver.try_recv() {
                 Ok(event) => {
+                    c.shared.led.lock(|led| {
+                        if led.is_high().unwrap() {
+                            led.set_low().unwrap()
+                        } else {
+                            led.set_high().unwrap()
+                        }
+                    });
                     match c.local.commando.handle_event(event) {
                         Some(op) => match op {
                             Operation::Audit => {
@@ -365,7 +379,7 @@ mod midi_master {
                 }
                 Err(_) => {}
             }
-            Mono::delay(10.millis()).await;
+            Mono::delay(1.millis()).await;
         }
     }
 
@@ -383,24 +397,25 @@ mod midi_master {
     }
 
     // TODO: Cloning of output sender casues memory leak.
-    #[task(local=[gpio_command_sender, button], shared=[&output_sender, led], binds=IO_IRQ_BANK0 )]
-    fn gpio_handler(c: gpio_handler::Context) {
-        if c.local.button.interrupt_status(Interrupt::EdgeLow) {
-            c.local
-                .gpio_command_sender
-                .clone()
-                .try_send(CommandEvent::Down(Input::Play))
-                .ok();
-            c.local.button.clear_interrupt(Interrupt::EdgeLow);
-        }
-        if c.local.button.interrupt_status(Interrupt::EdgeHigh) {
-            c.local
-                .gpio_command_sender
-                .clone()
-                .try_send(CommandEvent::Up(Input::Play))
-                .ok();
-            c.local.button.clear_interrupt(Interrupt::EdgeHigh);
-        }
+    #[task(local=[button_handler], shared=[led], binds=IO_IRQ_BANK0 )]
+    fn gpio_handler(mut c: gpio_handler::Context) {
+        c.local.button_handler.handle_irq()
+        // if c.local.button.interrupt_status(Interrupt::EdgeLow) {
+        //     c.local
+        //         .gpio_command_sender
+        //         .clone()
+        //         .try_send(CommandEvent::Down(Input::Play))
+        //         .ok();
+        //     c.local.button.clear_interrupt(Interrupt::EdgeLow);
+        // }
+        // if c.local.button.interrupt_status(Interrupt::EdgeHigh) {
+        //     c.local
+        //         .gpio_command_sender
+        //         .clone()
+        //         .try_send(CommandEvent::Up(Input::Play))
+        //         .ok();
+        //     c.local.button.clear_interrupt(Interrupt::EdgeHigh);
+        // }
     }
 
     #[task(local = [uart_player_sender, uart_command_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
