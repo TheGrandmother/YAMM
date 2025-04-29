@@ -415,7 +415,9 @@ mod midi_master {
                     match LiveEvent::parse(&bob[bytes_consumed..]) {
                         Ok(event) => {
                             bytes_consumed += event_length(event);
-                            c.local.midi_sender.try_send(event.to_static()).ok();
+                            if !recording {
+                                c.local.midi_sender.try_send(event.to_static()).ok();
+                            }
                             match event {
                                 LiveEvent::Midi { message, .. } if recording => match message {
                                     MidiMessage::NoteOn { key, .. } => {

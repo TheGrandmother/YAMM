@@ -88,7 +88,7 @@ impl ButtonHandler {
     }
 
     pub fn handle_irq(&mut self) {
-        let holdoff = 10.millis::<1, 1_000_000>();
+        let holdoff = 70.millis::<1, 1_000_000>();
         if self.play_btn.interrupt_status(Interrupt::EdgeLow) {
             if Mono::now() > self.get_last_sat(self.play_btn.id()) + holdoff {
                 self.commando_sender
