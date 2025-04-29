@@ -94,7 +94,6 @@ mod midi_master {
         watchdog: hal::Watchdog,
         uart: UartType,
         midi_sender: MessageSender<LiveEvent<'static>>,
-        divide_clock: bool,
         output_handler: OutputHandler,
         midi_mapper: MidiMapper,
         commando_player_sender: MessageSender<PlayerAction>,
@@ -109,6 +108,7 @@ mod midi_master {
     struct Shared {
         led: gpio::Pin<DynPinId, gpio::FunctionSioOutput, gpio::PullDown>,
         output_sender: MessageSender<OutputRequest>,
+        rec_switch: Pin<gpio::bank0::Gpio2, gpio::FunctionSioInput, gpio::PullUp>,
     }
 
     #[init()]
@@ -199,8 +199,6 @@ mod midi_master {
             &mut resets,
         ));
 
-        let divide_clock = pins.gpio2.into_pull_up_input().is_high().unwrap();
-
         // let mut play_btn = pins.gpio11.into_pull_up_input();
         // play_btn.set_interrupt_enabled(Interrupt::EdgeLow, true);
         // play_btn.set_interrupt_enabled(Interrupt::EdgeHigh, true);
@@ -235,13 +233,12 @@ mod midi_master {
         let mut player = Player::new(0, 8, 2, midi_sender.clone(), output_sender.clone());
 
         let commando = CommandoUnit::new();
-        let mut button_handler = ButtonHandler {
-            play_btn: pins.gpio11.reconfigure(),
-            step_btn: pins.gpio12.reconfigure(),
-            rec_btn: pins.gpio13.reconfigure(),
-            commando_sender: commando_sender.clone(),
-        };
-        button_handler.init();
+        let button_handler = ButtonHandler::new(
+            pins.gpio11.reconfigure(),
+            pins.gpio12.reconfigure(),
+            pins.gpio13.reconfigure(),
+            commando_sender.clone(),
+        );
 
         player.insert(
             LiveEvent::Midi {
@@ -304,13 +301,13 @@ mod midi_master {
             Shared {
                 led,
                 output_sender: output_sender.clone(),
+                rec_switch: pins.gpio2.reconfigure(),
             },
             Local {
                 usb_bus,
                 uart,
                 watchdog,
                 midi_sender,
-                divide_clock,
                 output_handler,
                 midi_mapper,
                 commando_player_sender: player_sender.clone(),
@@ -396,34 +393,18 @@ mod midi_master {
         }
     }
 
-    // TODO: Cloning of output sender casues memory leak.
     #[task(local=[button_handler], shared=[led], binds=IO_IRQ_BANK0 )]
-    fn gpio_handler(mut c: gpio_handler::Context) {
+    fn gpio_handler(c: gpio_handler::Context) {
         c.local.button_handler.handle_irq()
-        // if c.local.button.interrupt_status(Interrupt::EdgeLow) {
-        //     c.local
-        //         .gpio_command_sender
-        //         .clone()
-        //         .try_send(CommandEvent::Down(Input::Play))
-        //         .ok();
-        //     c.local.button.clear_interrupt(Interrupt::EdgeLow);
-        // }
-        // if c.local.button.interrupt_status(Interrupt::EdgeHigh) {
-        //     c.local
-        //         .gpio_command_sender
-        //         .clone()
-        //         .try_send(CommandEvent::Up(Input::Play))
-        //         .ok();
-        //     c.local.button.clear_interrupt(Interrupt::EdgeHigh);
-        // }
     }
 
-    #[task(local = [uart_player_sender, uart_command_sender, midi_sender, uart], shared=[led], binds=UART0_IRQ)]
+    #[task(local = [uart_player_sender, uart_command_sender, midi_sender, uart], shared=[led, &rec_switch], binds=UART0_IRQ)]
     fn uart(mut c: uart::Context) {
         let mut bob = [0u8; 256];
         if !c.local.uart.uart_is_readable() {
             return;
         }
+        let recording = c.shared.rec_switch.is_high().unwrap();
         match c.local.uart.read_raw(&mut bob) {
             Ok(bytes) => {
                 if bytes > 0 {
@@ -436,23 +417,25 @@ mod midi_master {
                             bytes_consumed += event_length(event);
                             c.local.midi_sender.try_send(event.to_static()).ok();
                             match event {
-                                LiveEvent::Midi { message, .. } => match message {
+                                LiveEvent::Midi { message, .. } if recording => match message {
                                     MidiMessage::NoteOn { key, .. } => {
                                         c.local
                                             .uart_command_sender
-                                            .try_send(CommandEvent::Down(Input::Key(key.into())))
+                                            .try_send(CommandEvent::Down(Input::MidiKey(
+                                                key.into(),
+                                            )))
                                             .ok();
                                     }
                                     MidiMessage::NoteOff { key, .. } => {
                                         c.local
                                             .uart_command_sender
-                                            .try_send(CommandEvent::Up(Input::Key(key.into())))
+                                            .try_send(CommandEvent::Up(Input::MidiKey(key.into())))
                                             .ok();
                                     }
                                     _ => {}
                                 },
 
-                                LiveEvent::Realtime(msg) => match msg {
+                                LiveEvent::Realtime(msg) if !recording => match msg {
                                     midly::live::SystemRealtime::TimingClock => {
                                         c.local
                                             .uart_player_sender

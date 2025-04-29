@@ -97,12 +97,11 @@ impl CommandoUnit {
                 [Up(MidiKey(key)), Empty, Empty] => Done(Operation::Commit(key)),
                 [Down(_), Empty, Empty] => Continue,
                 [Down(_), Down(_), Empty] => Continue,
-                [Down(i), Up(j), Empty] if i == j => match i {
-                    Step => Done(Operation::Tie),
-                    Rec => Done(Operation::ModeSwitch),
-                    MidiKey(key) => Done(Operation::Modify(key)),
-                    _ => Invalid,
-                },
+                [Down(Step), Up(Step), Empty] => Done(Operation::Tie),
+                [Down(Rec), Up(Rec), Empty] => Done(Operation::ModeSwitch),
+                [Down(MidiKey(key1)), Up(MidiKey(key2)), Empty] if key1 == key2 => {
+                    Done(Operation::Modify(key1))
+                }
                 _ => Invalid,
             },
             CommandState::Normal => match self.sequence {
