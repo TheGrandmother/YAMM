@@ -15,17 +15,20 @@ pub enum Operation {
 
 #[derive(Copy, Clone, PartialEq)]
 pub enum Input {
-    Key(u8),
+    MidiKey(u8),
     Play,
     Step,
     Rec,
 }
+use Input::*;
 
 #[derive(Copy, Clone, PartialEq)]
 pub enum CommandEvent {
+    Empty,
     Up(Input),
     Down(Input),
 }
+use CommandEvent::*;
 
 enum CommandState {
     Editing,
@@ -37,25 +40,26 @@ enum Progress {
     Continue,
     Done(Operation),
 }
+use Progress::*;
 
 pub struct CommandoUnit {
     state: CommandState,
-    sequence: [Option<CommandEvent>; 3],
+    sequence: [CommandEvent; 3],
 }
 
 impl CommandoUnit {
     pub fn new() -> Self {
         CommandoUnit {
             state: CommandState::Normal,
-            sequence: [None; 3],
+            sequence: [Empty; 3],
         }
     }
 
     fn append(&mut self, e: CommandEvent) {
         for i in 0..self.sequence.len() {
             match self.sequence[i] {
-                None => {
-                    self.sequence[i] = Some(e);
+                Empty => {
+                    self.sequence[i] = e;
                     return;
                 }
                 _ => {}
@@ -64,7 +68,7 @@ impl CommandoUnit {
     }
 
     fn reset(&mut self) {
-        self.sequence = [None; 3]
+        self.sequence = [Empty; 3]
     }
 
     pub fn handle_event(&mut self, event: CommandEvent) -> Option<Operation> {
@@ -90,51 +94,37 @@ impl CommandoUnit {
     fn interpret_sequence(&mut self) -> Progress {
         match self.state {
             CommandState::Editing => match self.sequence {
-                [Some(CommandEvent::Up(Input::Key(key))), None, None] => {
-                    Progress::Done(Operation::Commit(key))
-                }
-                [Some(CommandEvent::Down(_)), None, None] => Progress::Continue,
-                [Some(CommandEvent::Down(i)), Some(CommandEvent::Up(j)), None] if i == j => match i
-                {
-                    Input::Step => Progress::Done(Operation::Tie),
-                    Input::Rec => Progress::Done(Operation::ModeSwitch),
-                    Input::Key(key) => Progress::Done(Operation::Modify(key)),
-                    _ => Progress::Invalid,
+                [Up(MidiKey(key)), Empty, Empty] => Done(Operation::Commit(key)),
+                [Down(_), Empty, Empty] => Continue,
+                [Down(_), Down(_), Empty] => Continue,
+                [Down(i), Up(j), Empty] if i == j => match i {
+                    Step => Done(Operation::Tie),
+                    Rec => Done(Operation::ModeSwitch),
+                    MidiKey(key) => Done(Operation::Modify(key)),
+                    _ => Invalid,
                 },
-                _ => Progress::Invalid,
+                _ => Invalid,
             },
             CommandState::Normal => match self.sequence {
-                [Some(CommandEvent::Down(Input::Key(key))), None, None] => {
-                    Progress::Done(Operation::Begin(key))
-                }
-                [Some(CommandEvent::Down(_)), None, None] => Progress::Continue,
-                [Some(CommandEvent::Down(i)), Some(CommandEvent::Up(j)), None] if i == j => match i
-                {
-                    Input::Play => Progress::Done(Operation::Audit),
-                    Input::Step => Progress::Done(Operation::Advance),
-                    _ => Progress::Invalid,
+                [Down(MidiKey(key)), Empty, Empty] => Done(Operation::Begin(key)),
+                [Down(_), Empty, Empty] => Continue,
+                [Down(Play), Up(Play), Empty] => Done(Operation::Audit),
+                [Down(Step), Up(Step), Empty] => Done(Operation::Advance),
+                [Down(_), Down(_), Empty] => Continue,
+                [Down(i), Down(j), Up(k)] if j == k => match i {
+                    Play => match j {
+                        MidiKey(key) => Done(Operation::PlayerConf(key)),
+                        Step => Done(Operation::Restart),
+                        Rec => Done(Operation::Exit),
+                        _ => Invalid,
+                    },
+                    Step => match j {
+                        Rec => Done(Operation::Back),
+                        _ => Invalid,
+                    },
+                    _ => Invalid,
                 },
-                [Some(CommandEvent::Down(_)), Some(CommandEvent::Down(_)), None] => {
-                    Progress::Continue
-                }
-                [Some(CommandEvent::Down(i)), Some(CommandEvent::Down(j)), Some(CommandEvent::Up(k))]
-                    if j == k =>
-                {
-                    match i {
-                        Input::Play => match j {
-                            Input::Key(key) => Progress::Done(Operation::PlayerConf(key)),
-                            Input::Step => Progress::Done(Operation::Restart),
-                            Input::Rec => Progress::Done(Operation::Exit),
-                            _ => Progress::Invalid,
-                        },
-                        Input::Step => match j {
-                            Input::Rec => Progress::Done(Operation::Back),
-                            _ => Progress::Invalid,
-                        },
-                        _ => Progress::Invalid,
-                    }
-                }
-                _ => Progress::Invalid,
+                _ => Invalid,
             },
         }
     }
