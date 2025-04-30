@@ -1,3 +1,8 @@
+module Sequencer
+
+exports all
+definitions
+
 values
   subs_per_step: Ticks = 128
 types
@@ -10,9 +15,12 @@ types
   ord t1 < t2 == t1.step < t2.step or t1.step = t2.step and t1.sub < t2.sub
   ; 
 
-  MidiMessage = token;
+  MidiMessage :: channel: nat;
   Event :: msg : MidiMessage ts: TimeStamp;
-  Sequence = set of Event;
+  Sequence = set of Event
+  inv s == forall e,f in set s & e.ts.step = f.ts.step => e.msg <> f.msg
+  ;
+
   State = <playing> | <stop>;
   -- Division = <whole> | <half> | <quarter>| <eigth>| <sixtenth>
 
@@ -78,3 +86,5 @@ functions
 
 get_pps(divisor: nat, ppq: Ticks) pps: Ticks
 post pps = ppq * divisor*4;
+
+end Sequencer

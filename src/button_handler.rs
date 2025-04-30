@@ -61,23 +61,6 @@ impl ButtonHandler {
         }
     }
 
-    // fn handle_pin<I: PinId>(self, pin: Pin<I, FunctionSio<SioInput>, PullUp>, event: Input) {
-    //     if pin.interrupt_status(Interrupt::EdgeLow) {
-    //         if Mono::now() > self.get_last_sat(pin.id()) + 10.millis() {
-    //             self.commando_sender
-    //                 .try_send(CommandEvent::Down(event))
-    //                 .ok();
-    //             self.set_last_sat(pin.id())
-    //         }
-    //     }
-    //     if pin.interrupt_status(Interrupt::EdgeHigh) {
-    //         if Mono::now() > self.get_last_sat(pin.id()) + 10.millis() {
-    //             self.commando_sender.try_send(CommandEvent::Up(event)).ok();
-    //             self.set_last_sat(pin.id())
-    //         }
-    //     }
-    // }
-
     fn clear_interrupts(&mut self) {
         self.play_btn.clear_interrupt(Interrupt::EdgeLow);
         self.rec_btn.clear_interrupt(Interrupt::EdgeLow);
@@ -88,7 +71,7 @@ impl ButtonHandler {
     }
 
     pub fn handle_irq(&mut self) {
-        let holdoff = 70.millis::<1, 1_000_000>();
+        let holdoff = 10.millis::<1, 1_000_000>();
         if self.play_btn.interrupt_status(Interrupt::EdgeLow) {
             if Mono::now() > self.get_last_sat(self.play_btn.id()) + holdoff {
                 self.commando_sender

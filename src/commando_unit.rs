@@ -2,15 +2,14 @@ pub enum Operation {
     Advance,
     Back,
     Audit,
-    Exit,
     Restart,
     PlayerConf(u8),
-    ModeSwitch,
+    ModifierSwitch,
     Modify(u8),
     Tie,
     Begin(u8),
     Abort(u8),
-    Commit(u8),
+    Commit,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -81,7 +80,7 @@ impl CommandoUnit {
             Progress::Done(op) => {
                 match op {
                     Operation::Begin(_) => self.state = CommandState::Editing,
-                    Operation::Commit(_) => self.state = CommandState::Normal,
+                    Operation::Commit => self.state = CommandState::Normal,
                     _ => {}
                 };
                 self.reset();
@@ -94,11 +93,11 @@ impl CommandoUnit {
     fn interpret_sequence(&mut self) -> Progress {
         match self.state {
             CommandState::Editing => match self.sequence {
-                [Up(MidiKey(key)), Empty, Empty] => Done(Operation::Commit(key)),
+                [Up(MidiKey(_)), Empty, Empty] => Done(Operation::Commit),
                 [Down(_), Empty, Empty] => Continue,
                 [Down(_), Down(_), Empty] => Continue,
                 [Down(Step), Up(Step), Empty] => Done(Operation::Tie),
-                [Down(Rec), Up(Rec), Empty] => Done(Operation::ModeSwitch),
+                [Down(Rec), Up(Rec), Empty] => Done(Operation::ModifierSwitch),
                 [Down(MidiKey(key1)), Up(MidiKey(key2)), Empty] if key1 == key2 => {
                     Done(Operation::Modify(key1))
                 }
@@ -114,7 +113,6 @@ impl CommandoUnit {
                     Play => match j {
                         MidiKey(key) => Done(Operation::PlayerConf(key)),
                         Step => Done(Operation::Restart),
-                        Rec => Done(Operation::Exit),
                         _ => Invalid,
                     },
                     Step => match j {

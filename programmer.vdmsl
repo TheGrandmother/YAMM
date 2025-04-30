@@ -1,0 +1,106 @@
+module Programmer
+imports
+from Sequencer types Event TimeStamp
+
+exports all
+definitions
+
+types
+  Event = Sequencer`Event;
+  TimeStamp = Sequencer`TimeStamp;
+  Mode = <normal> | <insert>;
+  Modifier = <gate> | <vel> | <timing>;
+  EventProps ::
+    key: token
+    gate: [real]
+    vel: real
+    shift: real
+ ;
+
+  state Programmer of
+    channel: nat
+    step: nat
+    length: nat
+    mode: Mode
+    modifier: Modifier
+    props: [EventProps]
+  inv p == p.mode = <insert> => p.props <> nil
+  end
+
+
+operations
+
+BEGIN(key: token)
+ext wr mode : Mode
+    wr props : [EventProps]
+    wr modifier : Modifier
+pre mode = <normal>
+post mode = <insert> and modifier = <gate> and props = default_props(key)
+;
+
+COMMIT() events: set of Event
+ext wr mode : Mode
+    rd props : [EventProps]
+    rd step : nat
+pre mode = <insert> and props <> nil
+post mode = <normal> and events = make_events() and props = nil
+;
+
+ADVANCE()
+ext rd mode : Mode
+    rd length : nat
+    wr step : nat
+pre mode = <normal>
+post step = step~ + 1 or step = length - 1
+;
+
+BACK()
+ext rd mode : Mode
+    rd length : nat
+    wr step : nat
+pre mode = <normal>
+post step = step~ - 1 or step = 0
+;
+
+TIE()
+ext rd mode : Mode
+    wr props : [EventProps]
+pre mode = <insert>
+post props.gate  = nil
+;
+
+MODIFIER_SWITCH()
+ext rd mode : Mode
+    wr modifier : Modifier
+pre mode = <insert>
+post modifier <> modifier~
+;
+
+MODIFY(key: token)
+ext rd mode : Mode
+    wr props : [EventProps]
+    rd step : nat
+    rd modifier : Modifier
+pre mode = <insert>
+post props = update_props(modifier, key, props~)
+;
+
+-- Fix corener case for 100% gate
+pure make_events() events: set of Event
+pre props <> nil
+post
+  props.gate <> nil => exists e1,e2 in set events & e1.ts < e2.ts and
+  forall e in set events & e.ts.step < length and e.msg.channel = channel
+;
+
+
+
+functions
+
+default_props(key: token) props: EventProps
+post undefined;
+
+update_props(m: Modifier, key: token, old: EventProps) new: EventProps
+post undefined;
+
+end Programmer

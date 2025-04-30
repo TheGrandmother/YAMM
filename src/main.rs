@@ -354,16 +354,16 @@ mod midi_master {
             // FOR SOME HORRID REASON I CANNOT USE ASYNC HERE!?
             match receiver.try_recv() {
                 Ok(event) => {
-                    c.shared.led.lock(|led| {
-                        if led.is_high().unwrap() {
-                            led.set_low().unwrap()
-                        } else {
-                            led.set_high().unwrap()
-                        }
-                    });
                     match c.local.commando.handle_event(event) {
                         Some(op) => match op {
-                            Operation::Audit => {
+                            Operation::Restart => {
+                                c.shared.led.lock(|led| {
+                                    if led.is_high().unwrap() {
+                                        led.set_low().unwrap()
+                                    } else {
+                                        led.set_high().unwrap()
+                                    }
+                                });
                                 c.local
                                     .commando_player_sender
                                     .try_send(PlayerAction::Play)

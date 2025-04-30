@@ -8,7 +8,7 @@ use crate::outs::{Gate, OutputRequest};
 
 type Ticks = u32;
 
-const SUBS_PER_STEP: u32 = 128;
+pub const SUBS_PER_STEP: u32 = 128;
 const STEP_CAP: usize = 8;
 const MAX_LENGTH: usize = 16;
 
