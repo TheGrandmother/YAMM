@@ -30,6 +30,12 @@ types
 
 operations
 
+CONFIGURE(key: token)
+ext rd mode : Mode
+pre mode = <normal>
+post undefined
+;
+
 BEGIN(key: token)
 ext wr mode : Mode
     wr props : [EventProps]

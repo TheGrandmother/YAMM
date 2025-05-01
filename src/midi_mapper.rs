@@ -356,8 +356,8 @@ impl MidiMapper {
 
     fn handle_pitched_channel(&mut self, msg: MidiMessage, ports: PortMapping) {
         match msg {
-            MidiMessage::NoteOn { key, vel } => self.on_note_on(key, vel, msg, ports),
-            MidiMessage::NoteOff { key, vel } => self.on_note_off(key, vel),
+            MidiMessage::NoteOn { key, vel } => self.on_note_on(key + 24.into(), vel, msg, ports),
+            MidiMessage::NoteOff { key, vel } => self.on_note_off(key + 24.into(), vel),
             MidiMessage::Controller { controller, value } => match controller.as_int() {
                 1 => self.on_modwheel(value),
                 123 => self.all_notes_off(),

@@ -14,7 +14,7 @@ use rp_pico::hal::pwm::{AnySlice, Slice};
 use rp_pico::hal::pwm::{Channel, DynChannelId};
 use rp_pico::hal::pwm::{DynSliceId, Slices};
 
-const PWM_TOP: u16 = 0xA00;
+const PWM_TOP: u16 = 0xa00;
 
 pub type SliceAB = hal::pwm::Slice<hal::pwm::Pwm7, pwm::FreeRunning>;
 pub type SliceCD = hal::pwm::Slice<hal::pwm::Pwm0, pwm::FreeRunning>;

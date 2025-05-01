@@ -9,10 +9,11 @@ use panic_semihosting as _; // panic handler
 mod button_handler;
 mod commando_unit;
 mod midi_mapper;
-mod midi_size;
 mod outs;
 mod player;
+mod prorgrammer;
 mod pwm_pair;
+mod utils;
 
 use rtic_monotonics::rp2040::prelude::*;
 
@@ -53,10 +54,11 @@ mod midi_master {
     use crate::button_handler::ButtonHandler;
     use crate::commando_unit::{CommandEvent, CommandoUnit, Input, Operation};
     use crate::midi_mapper::{Config, MidiMapper};
-    use crate::midi_size::event_length;
     use crate::outs::{Cv, CvPorts, Gate, GateMappings, OutputHandler, OutputRequest};
     use crate::player::{Player, PlayerAction};
+    use crate::prorgrammer::Programmer;
     use crate::pwm_pair::CvPair;
+    use crate::utils::midi_size::event_length;
     use crate::Mono;
 
     const MESSAGE_CAPACITY: usize = 64;
@@ -102,6 +104,7 @@ mod midi_master {
         player: Player,
         commando: CommandoUnit,
         button_handler: ButtonHandler,
+        programmer: Programmer,
     }
 
     #[shared]
@@ -229,8 +232,9 @@ mod midi_master {
         let (player_sender, player_receiver) = make_channel!(PlayerAction, MESSAGE_CAPACITY);
         let (commando_sender, command_receiver) = make_channel!(CommandEvent, MESSAGE_CAPACITY);
 
-        let midi_mapper = MidiMapper::new(Config::one_duo(), output_sender.clone());
-        let mut player = Player::new(0, 8, 2, midi_sender.clone(), output_sender.clone());
+        let midi_mapper = MidiMapper::new(Config::two_mono(), output_sender.clone());
+        let player = Player::new(0, 8, 8, midi_sender.clone(), output_sender.clone());
+        let programmer = Programmer::new(player_sender.clone());
 
         let commando = CommandoUnit::new();
         let button_handler = ButtonHandler::new(
@@ -240,53 +244,53 @@ mod midi_master {
             commando_sender.clone(),
         );
 
-        player.insert(
-            LiveEvent::Midi {
-                channel: 0.into(),
-                message: MidiMessage::NoteOn {
-                    key: 24.into(),
-                    vel: 50.into(),
-                },
-            },
-            0,
-            0.0,
-        );
+        // player.insert(
+        //     LiveEvent::Midi {
+        //         channel: 0.into(),
+        //         message: MidiMessage::NoteOn {
+        //             key: 12.into(),
+        //             vel: 50.into(),
+        //         },
+        //     },
+        //     0,
+        //     0.0,
+        // );
 
-        player.insert(
-            LiveEvent::Midi {
-                channel: 0.into(),
-                message: MidiMessage::NoteOff {
-                    key: 24.into(),
-                    vel: 50.into(),
-                },
-            },
-            0,
-            0.5,
-        );
+        // player.insert(
+        //     LiveEvent::Midi {
+        //         channel: 0.into(),
+        //         message: MidiMessage::NoteOff {
+        //             key: 24.into(),
+        //             vel: 50.into(),
+        //         },
+        //     },
+        //     0,
+        //     0.5,
+        // );
 
-        player.insert(
-            LiveEvent::Midi {
-                channel: 0.into(),
-                message: MidiMessage::NoteOn {
-                    key: 29.into(),
-                    vel: 50.into(),
-                },
-            },
-            1,
-            0.0,
-        );
+        // player.insert(
+        //     LiveEvent::Midi {
+        //         channel: 0.into(),
+        //         message: MidiMessage::NoteOn {
+        //             key: 29.into(),
+        //             vel: 50.into(),
+        //         },
+        //     },
+        //     1,
+        //     0.0,
+        // );
 
-        player.insert(
-            LiveEvent::Midi {
-                channel: 0.into(),
-                message: MidiMessage::NoteOff {
-                    key: 29.into(),
-                    vel: 50.into(),
-                },
-            },
-            1,
-            0.5,
-        );
+        // player.insert(
+        //     LiveEvent::Midi {
+        //         channel: 0.into(),
+        //         message: MidiMessage::NoteOff {
+        //             key: 29.into(),
+        //             vel: 50.into(),
+        //         },
+        //     },
+        //     1,
+        //     0.5,
+        // );
 
         watchdog.start(fugit::ExtU32::micros(50_000));
         watchdog_feeder::spawn().ok();
@@ -316,6 +320,7 @@ mod midi_master {
                 uart_command_sender: commando_sender.clone(),
                 commando,
                 button_handler,
+                programmer,
             },
         );
     }
@@ -345,7 +350,7 @@ mod midi_master {
         }
     }
 
-    #[task(priority=1, local = [commando_player_sender, commando], shared=[led])]
+    #[task(priority=1, local = [commando_player_sender, commando, programmer], shared=[led, &rec_switch])]
     async fn command_handler(
         mut c: command_handler::Context,
         mut receiver: MessageReceiver<CommandEvent>,
@@ -353,28 +358,37 @@ mod midi_master {
         loop {
             // FOR SOME HORRID REASON I CANNOT USE ASYNC HERE!?
             match receiver.try_recv() {
-                Ok(event) => {
+                Ok(event) if c.shared.rec_switch.is_high().unwrap_or(false) => {
                     match c.local.commando.handle_event(event) {
-                        Some(op) => match op {
-                            Operation::Restart => {
-                                c.shared.led.lock(|led| {
-                                    if led.is_high().unwrap() {
-                                        led.set_low().unwrap()
-                                    } else {
-                                        led.set_high().unwrap()
-                                    }
-                                });
-                                c.local
-                                    .commando_player_sender
-                                    .try_send(PlayerAction::Play)
-                                    .ok();
+                        Some(op) => {
+                            match op {
+                                Operation::Begin(_) => {
+                                    c.shared.led.lock(|led| {
+                                        if led.is_high().unwrap() {
+                                            led.set_low().unwrap()
+                                        } else {
+                                            led.set_high().unwrap()
+                                        }
+                                    });
+                                }
+                                Operation::Commit => {
+                                    c.shared.led.lock(|led| {
+                                        if led.is_high().unwrap() {
+                                            led.set_low().unwrap()
+                                        } else {
+                                            led.set_high().unwrap()
+                                        }
+                                    });
+                                }
+                                _ => {}
                             }
-                            _ => {}
-                        },
+                            c.local.programmer.handle_operation(op)
+                        }
                         None => {}
                     };
                 }
                 Err(_) => {}
+                _ => {}
             }
             Mono::delay(1.millis()).await;
         }
@@ -442,6 +456,18 @@ mod midi_master {
                                         c.local
                                             .uart_player_sender
                                             .try_send(PlayerAction::Tick)
+                                            .ok();
+                                    }
+                                    midly::live::SystemRealtime::Start => {
+                                        c.local
+                                            .uart_player_sender
+                                            .try_send(PlayerAction::Play)
+                                            .ok();
+                                    }
+                                    midly::live::SystemRealtime::Stop => {
+                                        c.local
+                                            .uart_player_sender
+                                            .try_send(PlayerAction::Stop)
                                             .ok();
                                     }
                                     _ => {}

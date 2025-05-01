@@ -19,6 +19,7 @@ struct TimeStamp {
 }
 
 impl PartialOrd for TimeStamp {
+    // This does not handle last step....
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(if self.step < other.step {
             Ordering::Less
@@ -36,10 +37,42 @@ impl PartialOrd for TimeStamp {
     }
 }
 
+// Abstract away the midi implementation.
 #[derive(Copy, Clone)]
 struct Event {
     midi_event: LiveEvent<'static>,
     ts: TimeStamp,
+}
+
+impl Event {
+    fn replaces(self, other: Event) -> bool {
+        if self.ts.step == other.ts.step {
+            match (self.midi_event, other.midi_event) {
+                (
+                    LiveEvent::Midi {
+                        channel: c1,
+                        message: m1,
+                    },
+                    LiveEvent::Midi {
+                        channel: c2,
+                        message: m2,
+                    },
+                ) if c1 == c2 => match (m1, m2) {
+                    (
+                        MidiMessage::NoteOff { key: k1, .. },
+                        MidiMessage::NoteOff { key: k2, .. },
+                    ) => k1 == k2,
+                    (MidiMessage::NoteOn { key: k1, .. }, MidiMessage::NoteOn { key: k2, .. }) => {
+                        k1 == k2
+                    }
+                    _ => false,
+                },
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
 }
 
 type Step = [Option<Event>; STEP_CAP];
@@ -74,11 +107,15 @@ impl Sequence {
     pub fn insert(&mut self, event: Event) {
         for i in 0..STEP_CAP {
             match self.steps[event.ts.step as usize][i] {
-                Some(_) => {}
+                Some(e) if event.replaces(e) => {
+                    self.steps[event.ts.step as usize][i] = Some(event);
+                    return;
+                }
                 None => {
                     self.steps[event.ts.step as usize][i] = Some(event);
                     return;
                 }
+                _ => {}
             }
         }
     }
@@ -88,7 +125,7 @@ impl Sequence {
         for maybe_event in step {
             match maybe_event {
                 Some(Event { ts, midi_event }) => {
-                    if ts > ts1 && ts <= ts2 {
+                    if ts >= ts1 && ts <= ts2 {
                         self.sender.try_send(midi_event).ok();
                     }
                 }
@@ -100,7 +137,7 @@ impl Sequence {
             for maybe_event in step {
                 match maybe_event {
                     Some(Event { ts, midi_event }) => {
-                        if ts > ts1 && ts <= ts2 {
+                        if ts >= ts1 && ts <= ts2 {
                             self.sender.try_send(midi_event).ok();
                         }
                     }
@@ -122,6 +159,7 @@ pub enum PlayerAction {
     Play,
     Tick,
     Stop,
+    Insert(LiveEvent<'static>, u32, f32),
 }
 
 pub struct Player {
@@ -164,17 +202,13 @@ impl Player {
             PlayerAction::Play => self.play(),
             PlayerAction::Tick => self.tick(),
             PlayerAction::Stop => self.stop(),
+            PlayerAction::Insert(e, s, o) => self.insert(e, s, o),
         }
     }
 
     pub fn tick(&mut self) {
         match self.state {
             State::Playing => {
-                if self.sequence.count() == 0 {
-                    self.output_sender
-                        .try_send(OutputRequest::GateOn(Gate::FX))
-                        .ok();
-                }
                 let old_ts = self.get_ts();
                 self.clock += 1;
                 self.sequence.emit(old_ts, self.get_ts());
@@ -208,10 +242,11 @@ impl Player {
         }
     }
 
-    pub fn insert(&mut self, event: LiveEvent, step: u32, offset: f32) {
+    pub fn insert(&mut self, event: LiveEvent, step: u32, _offset: f32) {
         if step >= self.length {
             panic!();
         }
+        let offset = if _offset > 1.0 { 1.0 } else { _offset };
         self.sequence.insert(Event {
             midi_event: event.to_static(),
             ts: TimeStamp {

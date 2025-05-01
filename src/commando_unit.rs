@@ -8,7 +8,6 @@ pub enum Operation {
     Modify(u8),
     Tie,
     Begin(u8),
-    Abort(u8),
     Commit,
 }
 
