@@ -3,6 +3,7 @@ use core::cmp::Ordering;
 use midly::live::LiveEvent;
 use midly::MidiMessage;
 
+use crate::midi_mapper::make_all_notes_off;
 use crate::midi_master::MessageSender;
 use crate::outs::{Gate, OutputRequest};
 
@@ -201,7 +202,12 @@ impl Player {
         match action {
             PlayerAction::Play => self.play(),
             PlayerAction::Tick => self.tick(),
-            PlayerAction::Stop => self.stop(),
+            PlayerAction::Stop => {
+                self.midi_sender
+                    .try_send(make_all_notes_off(self.channel))
+                    .ok();
+                self.stop()
+            }
             PlayerAction::Insert(e, s, o) => self.insert(e, s, o),
         }
     }

@@ -233,7 +233,7 @@ mod midi_master {
         let (commando_sender, command_receiver) = make_channel!(CommandEvent, MESSAGE_CAPACITY);
 
         let midi_mapper = MidiMapper::new(Config::two_mono(), output_sender.clone());
-        let player = Player::new(0, 8, 8, midi_sender.clone(), output_sender.clone());
+        let player = Player::new(0, 8, 4, midi_sender.clone(), output_sender.clone());
         let programmer = Programmer::new(player_sender.clone());
 
         let commando = CommandoUnit::new();
@@ -243,54 +243,6 @@ mod midi_master {
             pins.gpio13.reconfigure(),
             commando_sender.clone(),
         );
-
-        // player.insert(
-        //     LiveEvent::Midi {
-        //         channel: 0.into(),
-        //         message: MidiMessage::NoteOn {
-        //             key: 12.into(),
-        //             vel: 50.into(),
-        //         },
-        //     },
-        //     0,
-        //     0.0,
-        // );
-
-        // player.insert(
-        //     LiveEvent::Midi {
-        //         channel: 0.into(),
-        //         message: MidiMessage::NoteOff {
-        //             key: 24.into(),
-        //             vel: 50.into(),
-        //         },
-        //     },
-        //     0,
-        //     0.5,
-        // );
-
-        // player.insert(
-        //     LiveEvent::Midi {
-        //         channel: 0.into(),
-        //         message: MidiMessage::NoteOn {
-        //             key: 29.into(),
-        //             vel: 50.into(),
-        //         },
-        //     },
-        //     1,
-        //     0.0,
-        // );
-
-        // player.insert(
-        //     LiveEvent::Midi {
-        //         channel: 0.into(),
-        //         message: MidiMessage::NoteOff {
-        //             key: 29.into(),
-        //             vel: 50.into(),
-        //         },
-        //     },
-        //     1,
-        //     0.5,
-        // );
 
         watchdog.start(fugit::ExtU32::micros(50_000));
         watchdog_feeder::spawn().ok();
@@ -362,15 +314,7 @@ mod midi_master {
                     match c.local.commando.handle_event(event) {
                         Some(op) => {
                             match op {
-                                Operation::Begin(_) => {
-                                    c.shared.led.lock(|led| {
-                                        if led.is_high().unwrap() {
-                                            led.set_low().unwrap()
-                                        } else {
-                                            led.set_high().unwrap()
-                                        }
-                                    });
-                                }
+                                Operation::Begin(_) => {}
                                 Operation::Commit => {
                                     c.shared.led.lock(|led| {
                                         if led.is_high().unwrap() {
@@ -476,13 +420,13 @@ mod midi_master {
                             }
                         }
                         Err(_) => {
-                            c.shared.led.lock(|led| {
-                                if led.is_high().unwrap() {
-                                    led.set_low().unwrap()
-                                } else {
-                                    led.set_high().unwrap()
-                                }
-                            });
+                            // c.shared.led.lock(|led| {
+                            //     if led.is_high().unwrap() {
+                            //         led.set_low().unwrap()
+                            //     } else {
+                            //         led.set_high().unwrap()
+                            //     }
+                            // });
                             return;
                         }
                     }
@@ -490,13 +434,13 @@ mod midi_master {
             }
             Err(Error::WouldBlock) => {}
             Err(Error::Other(_)) => {
-                c.shared.led.lock(|led| {
-                    if led.is_high().unwrap() {
-                        led.set_low().unwrap()
-                    } else {
-                        led.set_high().unwrap()
-                    }
-                });
+                // c.shared.led.lock(|led| {
+                //     if led.is_high().unwrap() {
+                //         led.set_low().unwrap()
+                //     } else {
+                //         led.set_high().unwrap()
+                //     }
+                // });
             }
         };
     }

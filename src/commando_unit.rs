@@ -18,6 +18,7 @@ pub enum Input {
     Step,
     Rec,
 }
+use midly::num::u7;
 use Input::*;
 
 #[derive(Copy, Clone, PartialEq)]
@@ -43,6 +44,7 @@ use Progress::*;
 pub struct CommandoUnit {
     state: CommandState,
     sequence: [CommandEvent; 3],
+    comitted_key: Option<u8>,
 }
 
 impl CommandoUnit {
@@ -50,6 +52,7 @@ impl CommandoUnit {
         CommandoUnit {
             state: CommandState::Normal,
             sequence: [Empty; 3],
+            comitted_key: None,
         }
     }
 
@@ -92,7 +95,9 @@ impl CommandoUnit {
     fn interpret_sequence(&mut self) -> Progress {
         match self.state {
             CommandState::Editing => match self.sequence {
-                [Up(MidiKey(_)), Empty, Empty] => Done(Operation::Commit),
+                [Up(MidiKey(key)), Empty, Empty] if Some(key) == self.comitted_key => {
+                    Done(Operation::Commit)
+                }
                 [Down(_), Empty, Empty] => Continue,
                 [Down(_), Down(_), Empty] => Continue,
                 [Down(Step), Up(Step), Empty] => Done(Operation::Tie),
@@ -103,7 +108,10 @@ impl CommandoUnit {
                 _ => Invalid,
             },
             CommandState::Normal => match self.sequence {
-                [Down(MidiKey(key)), Empty, Empty] => Done(Operation::Begin(key)),
+                [Down(MidiKey(key)), Empty, Empty] => {
+                    self.comitted_key = Some(key);
+                    Done(Operation::Begin(key))
+                }
                 [Down(_), Empty, Empty] => Continue,
                 [Down(Play), Up(Play), Empty] => Done(Operation::Audit),
                 [Down(Step), Up(Step), Empty] => Done(Operation::Advance),

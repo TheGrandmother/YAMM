@@ -53,11 +53,11 @@ pub struct Programmer {
 impl Programmer {
     pub fn new(player_sender: MessageSender<PlayerAction>) -> Self {
         Programmer {
-            channel: 4,
+            channel: 0,
             step: 0,
-            length: 8,
+            length: 4,
             mode: Mode::Normal,
-            modifier: Modifier::Gate,
+            modifier: Modifier::Vel,
             player_sender,
             props: None,
         }
@@ -67,7 +67,7 @@ impl Programmer {
         match self.mode {
             Mode::Insert => match op {
                 Operation::ModifierSwitch => {}
-                Operation::Modify(_) => {}
+                Operation::Modify(key) => self.modify(key),
                 Operation::Tie => match self.props {
                     Some(mut e) => e.tie(),
                     None => {}
@@ -87,7 +87,7 @@ impl Programmer {
                 Operation::PlayerConf(key) => self.set_conf(key),
                 Operation::Begin(key) => {
                     self.mode = Mode::Insert;
-                    self.modifier = Modifier::Gate;
+                    self.modifier = Modifier::Vel;
                     self.props = Some(EventProps::new(key))
                 }
                 _ => {}
@@ -153,6 +153,39 @@ impl Programmer {
             Note::A => {}
             Note::Bb => {}
             Note::B => {}
+        }
+    }
+
+    fn modify(&mut self, key: u8) {
+        match self.props {
+            Some(mut p) => {
+                let mut diff = key_to_note(key) as i8 - key_to_note(p.key) as i8;
+                diff = if diff > 0 { diff } else { diff * -1 };
+                let value = match diff {
+                    0 => return,
+                    1 => 0.0,
+                    2 => 0.25,
+                    3 => 0.5,
+                    4 => 0.75,
+                    5 => 1.0,
+                    _ => return,
+                };
+                match self.modifier {
+                    Modifier::Gate => p.gate = Some(value),
+                    Modifier::Vel => p.vel = value,
+                    Modifier::Timing => p.shift = value,
+                }
+                self.props = Some(p)
+            }
+            None => {}
+        }
+    }
+
+    fn switch_modifier(&mut self) {
+        match self.modifier {
+            Modifier::Gate => self.modifier = Modifier::Vel,
+            Modifier::Vel => self.modifier = Modifier::Timing,
+            Modifier::Timing => self.modifier = Modifier::Gate,
         }
     }
 }

@@ -1,4 +1,4 @@
-use midly::live::LiveEvent;
+use midly::live::{LiveEvent, SystemRealtime};
 use midly::num::{u4, u7};
 use midly::MidiMessage;
 use rtic_monotonics::rp2040::prelude::*;
@@ -299,6 +299,16 @@ pub struct MidiMapper {
     divisor: u32, //At what interval do we emit a clock pulse
 }
 
+pub fn make_all_notes_off(channel: u8) -> LiveEvent<'static> {
+    LiveEvent::Midi {
+        channel: channel.into(),
+        message: MidiMessage::Controller {
+            controller: 123.into(),
+            value: 0.into(),
+        },
+    }
+}
+
 impl MidiMapper {
     pub fn new(config: Config, io_sender: MessageSender<OutputRequest>) -> Self {
         Self {
@@ -315,8 +325,10 @@ impl MidiMapper {
         match msg {
             LiveEvent::Midi { channel, message } => match self.config.get_channel_type(channel) {
                 ChannelType::Drumms => match message {
-                    MidiMessage::NoteOff { key, vel } => self.on_drumm(key, vel, false),
-                    MidiMessage::NoteOn { key, vel } => self.on_drumm(key, vel, true),
+                    MidiMessage::NoteOff { key, vel } => {
+                        self.on_drumm(key.into(), vel.into(), false)
+                    }
+                    MidiMessage::NoteOn { key, vel } => self.on_drumm(key.into(), vel.into(), true),
                     _ => {}
                 },
                 ChannelType::Pitch(ports) => self.handle_pitched_channel(message, ports),
@@ -324,14 +336,14 @@ impl MidiMapper {
             },
             LiveEvent::Common(_) => {}
             LiveEvent::Realtime(msg) => match msg {
-                midly::live::SystemRealtime::TimingClock => self.tick().await,
-                midly::live::SystemRealtime::Start => self.flash_gate(Gate::Start).await,
-                midly::live::SystemRealtime::Continue => self.flash_gate(Gate::Start).await,
-                midly::live::SystemRealtime::Stop => {
+                SystemRealtime::TimingClock => self.tick().await,
+                SystemRealtime::Start => self.flash_gate(Gate::Start).await,
+                SystemRealtime::Continue => self.flash_gate(Gate::Start).await,
+                SystemRealtime::Stop => {
                     self.flash_gate(Gate::Stop).await;
                     self.all_notes_off();
                 }
-                midly::live::SystemRealtime::Reset => {
+                SystemRealtime::Reset => {
                     self.all_notes_off();
                     self.flash_gate(Gate::Stop).await;
                     self.flash_gate(Gate::Start).await;
@@ -424,11 +436,18 @@ impl MidiMapper {
                 None => {}
             }
         }
+        self.on_drumm(0, 0, false);
+        self.on_drumm(2, 0, false);
+        self.on_drumm(4, 0, false);
+        self.on_drumm(5, 0, false);
+        self.on_drumm(7, 0, false);
+        self.on_drumm(9, 0, false);
+        self.on_drumm(11, 0, false);
         self.tracked_messages = TrackedSet::new()
     }
 
-    pub fn on_drumm(&mut self, note: u7, _vel: u7, state: bool) {
-        let gate = match note.as_int() % 12 {
+    pub fn on_drumm(&mut self, note: u8, _vel: u8, state: bool) {
+        let gate = match note % 12 {
             0 => Some(Gate::Kick),     // C
             2 => Some(Gate::Snare),    // D
             4 => Some(Gate::Clap),     // E
