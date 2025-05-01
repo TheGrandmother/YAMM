@@ -14,6 +14,17 @@ pub enum Note {
     B,
 }
 
+pub fn is_white(key: u8) -> bool {
+    match key_to_note(key) {
+        Note::Db => false,
+        Note::Eb => false,
+        Note::Gb => false,
+        Note::Ab => false,
+        Note::Bb => false,
+        _ => true,
+    }
+}
+
 pub fn key_to_note(key: u8) -> Note {
     match key % 12 {
         0 => Note::C,
@@ -29,5 +40,18 @@ pub fn key_to_note(key: u8) -> Note {
         10 => Note::Bb,
         11 => Note::B,
         _ => Note::C,
+    }
+}
+
+pub fn to_deg(key: u8) -> i8 {
+    match key_to_note(key) {
+        Note::C => 0,
+        Note::D => 1,
+        Note::E => 2,
+        Note::F => 3,
+        Note::G => 4,
+        Note::A => 5,
+        Note::B => 6,
+        _ => 0,
     }
 }

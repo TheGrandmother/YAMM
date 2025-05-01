@@ -4,7 +4,7 @@ use midly::MidiMessage;
 use crate::commando_unit::Operation;
 use crate::midi_master::MessageSender;
 use crate::player::PlayerAction;
-use crate::utils::key_names::{key_to_note, Note};
+use crate::utils::key_names::{is_white, key_to_note, to_deg, Note};
 
 enum Mode {
     Insert,
@@ -55,9 +55,9 @@ impl Programmer {
         Programmer {
             channel: 0,
             step: 0,
-            length: 4,
+            length: 8,
             mode: Mode::Normal,
-            modifier: Modifier::Vel,
+            modifier: Modifier::Gate,
             player_sender,
             props: None,
         }
@@ -87,7 +87,7 @@ impl Programmer {
                 Operation::PlayerConf(key) => self.set_conf(key),
                 Operation::Begin(key) => {
                     self.mode = Mode::Insert;
-                    self.modifier = Modifier::Vel;
+                    self.modifier = Modifier::Gate;
                     self.props = Some(EventProps::new(key))
                 }
                 _ => {}
@@ -157,9 +157,12 @@ impl Programmer {
     }
 
     fn modify(&mut self, key: u8) {
+        if !is_white(key) {
+            return;
+        }
         match self.props {
             Some(mut p) => {
-                let mut diff = key_to_note(key) as i8 - key_to_note(p.key) as i8;
+                let mut diff = to_deg(key) - to_deg(p.key);
                 diff = if diff > 0 { diff } else { diff * -1 };
                 let value = match diff {
                     0 => return,
