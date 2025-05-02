@@ -1,13 +1,16 @@
 use embedded_hal::digital::v2::PinState as V2PinState;
 use embedded_hal::digital::v2::{InputPin, OutputPin};
+use fugit::{Duration, Instant};
 use rp_pico::hal::gpio;
 use rp_pico::hal::gpio::bank0::*;
 use rp_pico::hal::gpio::PinState;
 use rp_pico::hal::gpio::Pins;
+use rtic_monotonics::rp2040::prelude::*;
 
 use crate::pwm_pair::{CvPair, SliceAB, SliceCD};
+use crate::Mono;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Gate {
     Kick,
     OpenHH,
@@ -148,11 +151,17 @@ pub enum OutputRequest {
     GateOff(Gate),
     SetNote(Cv, u8),
     SetVal(Cv, f32),
+    Flash(Gate),
 }
+
+type Time = Instant<u64, 1, 1_000_000>;
+const TIMERS: usize = 8;
 
 pub struct OutputHandler {
     gates: GateMappings,
     ports: CvPorts,
+    flashes: [Option<(Gate, Time)>; TIMERS],
+    flash_time: Duration<u64, 1, 1000000>,
 }
 
 impl OutputHandler {
@@ -160,6 +169,8 @@ impl OutputHandler {
         return Self {
             gates,
             ports: cv_ports,
+            flashes: [None; TIMERS],
+            flash_time: 20.millis(),
         };
     }
 
@@ -168,12 +179,50 @@ impl OutputHandler {
         self.ports.reset();
     }
 
+    pub fn check_flashes(&mut self) -> Option<Duration<u64, 1, 1000000>> {
+        let mut shortest_wait = None;
+        for i in 0..TIMERS {
+            match self.flashes[i] {
+                Some((gate, start)) => {
+                    let age = Mono::now() - start;
+                    if age >= self.flash_time {
+                        self.gates.set_state(gate, false);
+                        self.flashes[i] = None
+                    } else {
+                        if shortest_wait == None || Some(age) < shortest_wait {
+                            shortest_wait = Some(age);
+                        }
+                    }
+                }
+                None => {}
+            }
+        }
+        return shortest_wait;
+    }
+
+    // Not super efficient, same gate can appear multiple times
+    // Is fine. Probably.
+    fn add_flash(&mut self, gate: Gate) {
+        for i in 0..TIMERS {
+            match self.flashes[i] {
+                Some((g, _)) if g == gate => self.flashes[i] = Some((gate, Mono::now())),
+                Some(_) => {}
+                None => self.flashes[i] = Some((gate, Mono::now())),
+            }
+        }
+    }
+
     pub fn handle_message(&mut self, message: OutputRequest) -> Option<()> {
         match message {
             OutputRequest::GateOn(gate) => self.gates.set_state(gate, true),
             OutputRequest::GateOff(gate) => self.gates.set_state(gate, false),
             OutputRequest::SetNote(port, note) => self.ports.set_note(port, note),
             OutputRequest::SetVal(port, val) => self.ports.set_val(port, val),
+            OutputRequest::Flash(gate) => {
+                self.gates.set_state(gate, true);
+                self.add_flash(gate);
+                None
+            }
         }
     }
 }

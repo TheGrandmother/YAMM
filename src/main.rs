@@ -279,13 +279,22 @@ mod midi_master {
 
     #[task(priority=3, local = [output_handler], shared=[led])]
     async fn output_task(c: output_task::Context, mut receiver: MessageReceiver<OutputRequest>) {
+        let mut waiting_time: Duration<u64, 1, 1000000> = 1.millis();
         loop {
-            match receiver.recv().await {
-                Ok(req) => {
-                    c.local.output_handler.handle_message(req);
-                }
+            match Mono::timeout_after(waiting_time, receiver.recv()).await {
+                Ok(msg) => match msg {
+                    Ok(req) => {
+                        c.local.output_handler.handle_message(req);
+                    }
+                    Err(_) => {}
+                },
                 Err(_) => {}
-            }
+            };
+            waiting_time = c
+                .local
+                .output_handler
+                .check_flashes()
+                .unwrap_or(1000.millis());
         }
     }
 
@@ -357,7 +366,7 @@ mod midi_master {
     }
 
     #[task(local = [uart_player_sender, uart_command_sender, midi_sender, uart], shared=[led, &rec_switch], binds=UART0_IRQ)]
-    fn uart(mut c: uart::Context) {
+    fn uart(c: uart::Context) {
         let mut bob = [0u8; 256];
         if !c.local.uart.uart_is_readable() {
             return;

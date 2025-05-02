@@ -5,8 +5,6 @@ use rtic_monotonics::rp2040::prelude::*;
 
 use crate::midi_master::MessageSender;
 use crate::outs::{Cv, Gate, OutputRequest};
-use crate::Mono;
-use fugit::Duration;
 
 #[derive(Copy, Clone, PartialEq)]
 enum Port {
@@ -354,9 +352,7 @@ impl MidiMapper {
     }
 
     async fn flash_gate(&mut self, gate: Gate) {
-        self.io_sender.send(OutputRequest::GateOn(gate)).await.ok();
-        Mono::delay(50.millis()).await;
-        self.io_sender.send(OutputRequest::GateOff(gate)).await.ok();
+        self.io_sender.send(OutputRequest::Flash(gate)).await.ok();
     }
 
     async fn tick(&mut self) {
