@@ -153,6 +153,15 @@ impl Config {
             mod_port: None,
         }
     }
+    pub fn one_mono() -> Self {
+        Config {
+            drum_channel: 4.into(),
+            port_mappings: [Some([Some(Port::A), None, None, None]), None, None, None],
+            vel_mappings: [Some(Port::B), None, None, None],
+            aftertouch: None,
+            mod_port: Some(Port::D),
+        }
+    }
 }
 
 const CAPACITY: usize = 16;
