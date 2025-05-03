@@ -1,2 +1,2 @@
 pub mod key_names;
-pub mod midi_size;
+pub mod midi_utils;

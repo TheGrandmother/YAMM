@@ -40,7 +40,6 @@ impl PartialOrd for TimeStamp {
     }
 }
 
-// Abstract away the midi implementation.
 #[derive(Copy, Clone)]
 struct Event {
     midi_event: LiveEvent<'static>,
@@ -186,11 +185,18 @@ enum State {
 
 const PPQ: Ticks = 24;
 
+#[derive(Copy, Clone)]
 pub enum PlayerAction {
     Play,
     Tick,
     Stop,
     Insert(LiveEvent<'static>, u32, f32),
+}
+
+#[derive(Copy, Clone)]
+pub enum PlayerMessage {
+    Broadcast(PlayerAction),
+    Action(u8, PlayerAction),
 }
 
 pub struct Player {
@@ -228,21 +234,24 @@ impl Player {
         }
     }
 
-    pub fn handle_message(&mut self, action: PlayerAction) {
-        match action {
-            PlayerAction::Play => self.play(),
-            PlayerAction::Tick => self.tick(),
-            PlayerAction::Stop => {
-                self.midi_sender
-                    .try_send(make_all_notes_off(self.channel))
-                    .ok();
-                self.stop()
-            }
-            PlayerAction::Insert(e, s, o) => self.insert(e, s, o),
+    pub fn handle_message(&mut self, msg: PlayerMessage) {
+        match msg {
+            PlayerMessage::Action(ch, _) if ch != self.channel => {}
+            PlayerMessage::Broadcast(action) | PlayerMessage::Action(_, action) => match action {
+                PlayerAction::Play => self.play(),
+                PlayerAction::Tick => self.tick(),
+                PlayerAction::Stop => {
+                    self.midi_sender
+                        .try_send(make_all_notes_off(self.channel))
+                        .ok();
+                    self.stop()
+                }
+                PlayerAction::Insert(e, s, o) => self.insert(e, s, o),
+            },
         }
     }
 
-    pub fn tick(&mut self) {
+    fn tick(&mut self) {
         match self.state {
             State::Playing => {
                 let old_ts = self.get_ts();
@@ -253,14 +262,14 @@ impl Player {
         }
     }
 
-    pub fn play(&mut self) {
+    fn play(&mut self) {
         match self.state {
             State::Playing => {}
             State::Stopped => self.state = State::Playing,
         }
     }
 
-    pub fn stop(&mut self) {
+    fn stop(&mut self) {
         match self.state {
             State::Playing => {
                 /*Issue all notes off*/

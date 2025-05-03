@@ -55,10 +55,10 @@ mod midi_master {
     use crate::commando_unit::{CommandEvent, CommandoUnit, Input, Operation};
     use crate::midi_mapper::{Config, MidiMapper};
     use crate::outs::{Cv, CvPorts, Gate, GateMappings, OutputHandler, OutputRequest};
-    use crate::player::{Player, PlayerAction};
+    use crate::player::{Player, PlayerAction, PlayerMessage};
     use crate::prorgrammer::Programmer;
     use crate::pwm_pair::CvPair;
-    use crate::utils::midi_size::event_length;
+    use crate::utils::midi_utils::event_length;
     use crate::Mono;
 
     const MESSAGE_CAPACITY: usize = 64;
@@ -98,10 +98,10 @@ mod midi_master {
         midi_sender: MessageSender<LiveEvent<'static>>,
         output_handler: OutputHandler,
         midi_mapper: MidiMapper,
-        commando_player_sender: MessageSender<PlayerAction>,
-        uart_player_sender: MessageSender<PlayerAction>,
+        commando_player_sender: MessageSender<PlayerMessage>,
+        uart_player_sender: MessageSender<PlayerMessage>,
         uart_command_sender: MessageSender<CommandEvent>,
-        player: Player,
+        players: [Player; 5],
         commando: CommandoUnit,
         button_handler: ButtonHandler,
         programmer: Programmer,
@@ -229,12 +229,18 @@ mod midi_master {
         uart.enable_rx_interrupt();
 
         let (midi_sender, midi_receiver) = make_channel!(LiveEvent<'static>, MESSAGE_CAPACITY);
-        let (player_sender, player_receiver) = make_channel!(PlayerAction, MESSAGE_CAPACITY);
+        let (player_sender, player_receiver) = make_channel!(PlayerMessage, MESSAGE_CAPACITY);
         let (commando_sender, command_receiver) = make_channel!(CommandEvent, MESSAGE_CAPACITY);
 
         let midi_mapper = MidiMapper::new(Config::two_mono(), output_sender.clone());
-        let player = Player::new(0, 8, 4, midi_sender.clone(), output_sender.clone());
-        let programmer = Programmer::new(player_sender.clone());
+        let players = [
+            Player::new(0, 8, 8, midi_sender.clone(), output_sender.clone()),
+            Player::new(1, 8, 8, midi_sender.clone(), output_sender.clone()),
+            Player::new(2, 8, 8, midi_sender.clone(), output_sender.clone()),
+            Player::new(3, 8, 8, midi_sender.clone(), output_sender.clone()),
+            Player::new(4, 8, 8, midi_sender.clone(), output_sender.clone()),
+        ];
+        let programmer = Programmer::new(player_sender.clone(), output_sender.clone());
 
         let commando = CommandoUnit::new();
         let button_handler = ButtonHandler::new(
@@ -268,7 +274,7 @@ mod midi_master {
                 midi_mapper,
                 commando_player_sender: player_sender.clone(),
                 uart_player_sender: player_sender.clone(),
-                player,
+                players,
                 uart_command_sender: commando_sender.clone(),
                 commando,
                 button_handler,
@@ -294,7 +300,7 @@ mod midi_master {
                 .local
                 .output_handler
                 .check_flashes()
-                .unwrap_or(1000.millis());
+                .unwrap_or(100.millis());
         }
     }
 
@@ -347,14 +353,18 @@ mod midi_master {
         }
     }
 
-    #[task(priority=2, local = [player], shared=[led])]
+    #[task(priority=2, local = [players], shared=[led])]
     async fn player_handler(
         c: player_handler::Context,
-        mut receiver: MessageReceiver<PlayerAction>,
+        mut receiver: MessageReceiver<PlayerMessage>,
     ) {
         loop {
             match receiver.recv().await {
-                Ok(action) => c.local.player.handle_message(action),
+                Ok(action) => {
+                    for i in 0..c.local.players.len() {
+                        c.local.players[i].handle_message(action);
+                    }
+                }
                 Err(_) => {}
             }
         }
@@ -408,19 +418,19 @@ mod midi_master {
                                     midly::live::SystemRealtime::TimingClock => {
                                         c.local
                                             .uart_player_sender
-                                            .try_send(PlayerAction::Tick)
+                                            .try_send(PlayerMessage::Broadcast(PlayerAction::Tick))
                                             .ok();
                                     }
                                     midly::live::SystemRealtime::Start => {
                                         c.local
                                             .uart_player_sender
-                                            .try_send(PlayerAction::Play)
+                                            .try_send(PlayerMessage::Broadcast(PlayerAction::Play))
                                             .ok();
                                     }
                                     midly::live::SystemRealtime::Stop => {
                                         c.local
                                             .uart_player_sender
-                                            .try_send(PlayerAction::Stop)
+                                            .try_send(PlayerMessage::Broadcast(PlayerAction::Stop))
                                             .ok();
                                     }
                                     _ => {}

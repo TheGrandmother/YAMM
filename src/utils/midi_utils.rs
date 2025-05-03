@@ -1,4 +1,14 @@
 use midly::live::LiveEvent;
+use midly::MidiMessage;
+
+// Not exhaustive
+pub fn equivalent(m1: MidiMessage, m2: MidiMessage) -> bool {
+    match (m1, m2) {
+        (MidiMessage::NoteOff { key: k1, .. }, MidiMessage::NoteOff { key: k2, .. }) => k1 == k2,
+        (MidiMessage::NoteOn { key: k1, .. }, MidiMessage::NoteOn { key: k2, .. }) => k1 == k2,
+        _ => false,
+    }
+}
 
 pub fn event_length(event: LiveEvent) -> usize {
     1 + match event {

@@ -30,10 +30,14 @@ types
 
 operations
 
-CONFIGURE(key: token)
-ext rd mode : Mode
+SET_CHANNEL(new_chan: nat)
+ext wr channel : nat
+    wr step : nat
+    wr length : nat
+    wr props: [EventProps]
+    rd mode : Mode
 pre mode = <normal>
-post undefined
+post channel = new_chan and props = nil and step = 0 and length = channel_length(new_chan)
 ;
 
 BEGIN(key: token)
@@ -98,14 +102,17 @@ post
   props.gate <> nil => exists e1,e2 in set events & e1.ts < e2.ts and
   forall e in set events & e.ts.step < length and e.msg.channel = channel
 ;
-
-
-
 functions
 
+-- @Warning(5000)
+channel_length(chan: nat) length : nat
+post undefined;
+
+-- @Warning(5000)
 default_props(key: token) props: EventProps
 post undefined;
 
+-- @Warning(5000)
 update_props(m: Modifier, key: token, old: EventProps) new: EventProps
 post undefined;
 

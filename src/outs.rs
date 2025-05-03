@@ -205,9 +205,17 @@ impl OutputHandler {
     fn add_flash(&mut self, gate: Gate) {
         for i in 0..TIMERS {
             match self.flashes[i] {
-                Some((g, _)) if g == gate => self.flashes[i] = Some((gate, Mono::now())),
+                Some((g, _)) if g == gate => {
+                    self.gates.set_state(gate, true);
+                    self.flashes[i] = Some((gate, Mono::now()));
+                    return;
+                }
                 Some(_) => {}
-                None => self.flashes[i] = Some((gate, Mono::now())),
+                None => {
+                    self.gates.set_state(gate, true);
+                    self.flashes[i] = Some((gate, Mono::now()));
+                    return;
+                }
             }
         }
     }
@@ -219,7 +227,6 @@ impl OutputHandler {
             OutputRequest::SetNote(port, note) => self.ports.set_note(port, note),
             OutputRequest::SetVal(port, val) => self.ports.set_val(port, val),
             OutputRequest::Flash(gate) => {
-                self.gates.set_state(gate, true);
                 self.add_flash(gate);
                 None
             }

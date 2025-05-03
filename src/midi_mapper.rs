@@ -5,6 +5,7 @@ use rtic_monotonics::rp2040::prelude::*;
 
 use crate::midi_master::MessageSender;
 use crate::outs::{Cv, Gate, OutputRequest};
+use crate::utils::midi_utils::equivalent;
 
 #[derive(Copy, Clone, PartialEq)]
 enum Port {
@@ -188,12 +189,23 @@ impl TrackedSet {
             key,
         };
 
-        self.port_age[tm.port.index()] += 1;
+        for pm in self.active_messages {
+            match pm {
+                Some(TrackedMessage { msg: msg_1, .. }) => {
+                    if equivalent(msg_1, msg) {
+                        return;
+                    }
+                }
+                None => {}
+            }
+        }
+
         for i in 0..CAPACITY {
             match &self.active_messages[i] {
                 Some(_) => {}
                 None => {
                     self.active_messages[i] = Some(tm);
+                    self.port_age[tm.port.index()] += 1;
                     return;
                 }
             }

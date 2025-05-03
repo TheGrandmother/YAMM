@@ -3,7 +3,8 @@ use midly::MidiMessage;
 
 use crate::commando_unit::Operation;
 use crate::midi_master::MessageSender;
-use crate::player::PlayerAction;
+use crate::outs::{Gate, OutputRequest};
+use crate::player::{PlayerAction, PlayerMessage};
 use crate::utils::key_names::{is_white, key_to_note, to_deg, Note};
 
 enum Mode {
@@ -35,8 +36,8 @@ impl EventProps {
         }
     }
 
-    fn tie(&mut self) {
-        self.gate = None
+    fn tie(self) -> Self {
+        EventProps { gate: None, ..self }
     }
 }
 
@@ -47,19 +48,24 @@ pub struct Programmer {
     mode: Mode,
     modifier: Modifier,
     props: Option<EventProps>,
-    player_sender: MessageSender<PlayerAction>,
+    player_sender: MessageSender<PlayerMessage>,
+    output_sender: MessageSender<OutputRequest>,
 }
 
 impl Programmer {
-    pub fn new(player_sender: MessageSender<PlayerAction>) -> Self {
+    pub fn new(
+        player_sender: MessageSender<PlayerMessage>,
+        output_sender: MessageSender<OutputRequest>,
+    ) -> Self {
         Programmer {
             channel: 0,
             step: 0,
-            length: 4,
+            length: 8,
             mode: Mode::Normal,
             modifier: Modifier::Gate,
             player_sender,
             props: None,
+            output_sender,
         }
     }
 
@@ -69,7 +75,7 @@ impl Programmer {
                 Operation::ModifierSwitch => {}
                 Operation::Modify(key) => self.modify(key),
                 Operation::Tie => match self.props {
-                    Some(mut e) => e.tie(),
+                    Some(e) => self.props = Some(e.tie()),
                     None => {}
                 },
                 Operation::Commit => {
@@ -77,7 +83,7 @@ impl Programmer {
                     self.mode = Mode::Normal;
                     self.props = None;
                     if self.step < self.length - 1 {
-                        self.step += 1
+                        self.step += 1;
                     }
                 }
                 _ => {}
@@ -87,7 +93,9 @@ impl Programmer {
                 Operation::Back if self.step > 0 => self.step -= 1,
                 Operation::Restart => self.step = 0,
                 Operation::Audit => {}
-                Operation::PlayerConf(key) => self.set_conf(key),
+                Operation::PlayerConf(key) => {
+                    self.set_conf(key);
+                }
                 Operation::Begin(key) => {
                     self.mode = Mode::Insert;
                     self.modifier = Modifier::Gate;
@@ -107,31 +115,37 @@ impl Programmer {
                 shift,
             }) => {
                 self.player_sender
-                    .try_send(PlayerAction::Insert(
-                        LiveEvent::Midi {
-                            channel: self.channel.into(),
-                            message: MidiMessage::NoteOn {
-                                key: key.into(),
-                                vel: ((vel * 127.0) as u8).into(),
+                    .try_send(PlayerMessage::Action(
+                        self.channel,
+                        PlayerAction::Insert(
+                            LiveEvent::Midi {
+                                channel: self.channel.into(),
+                                message: MidiMessage::NoteOn {
+                                    key: key.into(),
+                                    vel: ((vel * 127.0) as u8).into(),
+                                },
                             },
-                        },
-                        self.step.into(),
-                        shift,
+                            self.step.into(),
+                            shift,
+                        ),
                     ))
                     .ok();
                 match gate {
                     Some(g) => {
                         self.player_sender
-                            .try_send(PlayerAction::Insert(
-                                LiveEvent::Midi {
-                                    channel: self.channel.into(),
-                                    message: MidiMessage::NoteOff {
-                                        key: key.into(),
-                                        vel: ((vel * 127.0) as u8).into(),
+                            .try_send(PlayerMessage::Action(
+                                self.channel,
+                                PlayerAction::Insert(
+                                    LiveEvent::Midi {
+                                        channel: self.channel.into(),
+                                        message: MidiMessage::NoteOff {
+                                            key: key.into(),
+                                            vel: ((vel * 127.0) as u8).into(),
+                                        },
                                     },
-                                },
-                                self.step.into(),
-                                shift + g,
+                                    self.step.into(),
+                                    shift + g,
+                                ),
                             ))
                             .ok();
                     }
@@ -157,23 +171,22 @@ impl Programmer {
             Note::Bb => {}
             Note::B => {}
         }
+        self.step = 0;
+        // Do length horrors
     }
 
     fn modify(&mut self, key: u8) {
-        if !is_white(key) {
-            return;
-        }
         match self.props {
             Some(mut p) => {
                 let mut diff = key as i8 - p.key as i8;
                 diff = if diff > 0 { diff } else { diff * -1 };
                 let value = match diff {
                     0 => return,
-                    1 => 0.0,
+                    1 => 0.1,
                     2 => 0.25,
                     3 => 0.5,
                     4 => 0.75,
-                    5 => 1.0,
+                    5 => 0.9,
                     _ => return,
                 };
                 match self.modifier {
