@@ -191,12 +191,16 @@ impl TrackedSet {
 
         for pm in self.active_messages {
             match pm {
-                Some(TrackedMessage { msg: msg_1, .. }) => {
+                Some(TrackedMessage {
+                    msg: msg_1,
+                    port: p,
+                    ..
+                }) if p == port => {
                     if equivalent(msg_1, msg) {
                         return;
                     }
                 }
-                None => {}
+                _ => {}
             }
         }
 
@@ -284,14 +288,21 @@ impl TrackedSet {
         return newest_message;
     }
 
-    fn remove(&mut self, lifted_key: u7) -> Option<Port> {
+    fn remove(&mut self, lifted_key: u7, ports: PortMapping) -> Option<Port> {
         for i in 0..CAPACITY {
             let tm = self.active_messages[i];
             match tm {
                 Some(TrackedMessage { key, port, .. }) if key == lifted_key => {
-                    self.active_messages[i] = None;
-                    self.port_age[port.index()] = 0;
-                    return Some(port);
+                    for possible_port in ports {
+                        match possible_port {
+                            Some(p) if p == port => {
+                                self.active_messages[i] = None;
+                                self.port_age[port.index()] = 0;
+                                return Some(port);
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -377,7 +388,7 @@ impl MidiMapper {
     fn handle_pitched_channel(&mut self, msg: MidiMessage, ports: PortMapping) {
         match msg {
             MidiMessage::NoteOn { key, vel } => self.on_note_on(key + 0.into(), vel, msg, ports),
-            MidiMessage::NoteOff { key, vel } => self.on_note_off(key + 0.into(), vel),
+            MidiMessage::NoteOff { key, vel } => self.on_note_off(key + 0.into(), vel, ports),
             MidiMessage::Controller { controller, value } => match controller.as_int() {
                 1 => self.on_modwheel(value),
                 123 => self.all_notes_off(),
@@ -420,8 +431,8 @@ impl MidiMapper {
         }
     }
 
-    fn on_note_off(&mut self, key: u7, _vel: u7) {
-        match self.tracked_messages.remove(key) {
+    fn on_note_off(&mut self, key: u7, _vel: u7, ports: PortMapping) {
+        match self.tracked_messages.remove(key, ports) {
             Some(port) => match self.tracked_messages.find_newest_by_port(port) {
                 Some(tm) => {
                     self.io_sender.try_send(port.request_set_note(tm.key)).ok();
