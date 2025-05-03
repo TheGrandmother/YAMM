@@ -47,6 +47,7 @@ post
     <playing> -> (
       clock = clock~ + 1 and
       ts = get_ts() and
+      (forall e1, e2 in set emitted & not conflicts(e1, e2)) and
       let passed = get_passed_events(ts~, ts)
       in
         (forall e in set emitted & (forall e2 in set emitted & e.ts = e2.ts) and (forall p in set passed & e.ts < p.ts))
@@ -84,7 +85,6 @@ post
 pure get_passed_events(old_ts: TimeStamp, new_ts: TimeStamp) passed: set of Event
 pre new_ts.step = 0 or new_ts.step - old_ts.step <= 1 -- We go at most one step
 post
-  -- forall e in set sequence & ((e.ts > old_ts or new_ts.step < old_ts.step) and e.ts <= new_ts) => e in set emitted
   forall e in set sequence & let
     no_wrap = old_ts <= new_ts and e.ts > old_ts and e.ts <= new_ts,
     wrap = new_ts.step < old_ts.step and e.ts.step = new_ts.step and e.ts < new_ts
@@ -93,6 +93,12 @@ post
 ;
 
 functions
+
+-- @Warning(5000)
+conflicts(e1: Event, e2: Event) conflicting: bool
+-- Two events conflict if they cannot be emitted at any order at the same time
+-- A gate on and a gate off event for the same gate ocnflicts for example
+post undefined;
 
 pop(o: set of Event) rest: set of Event
 post exists popped in set o & popped not in set rest and forall r in set rest & popped.ts < r.ts;
