@@ -13,7 +13,8 @@ type Ticks = u32;
 
 pub const SUBS_PER_STEP: u32 = 128;
 const STEP_CAP: usize = 8;
-const MAX_LENGTH: usize = 16;
+pub const MAX_LENGTH: usize = 32;
+pub const INITIAL_LENGTH: u8 = 8;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct TimeStamp {
@@ -191,6 +192,7 @@ pub enum PlayerAction {
     Tick,
     Stop,
     SetDivisor(u8),
+    SetLength(u8),
     Insert(LiveEvent<'static>, u32, f32),
 }
 
@@ -202,7 +204,7 @@ pub enum PlayerMessage {
 
 pub struct Player {
     channel: u8,
-    length: u32,
+    length: u8,
     clock: Ticks,
     state: State,
     sequence: Sequence,
@@ -215,16 +217,11 @@ impl Player {
     pub fn new(
         channel: u8,
         divisor: u32,
-        length: u8,
         midi_sender: MessageSender<LiveEvent<'static>>,
         output_sender: MessageSender<OutputRequest>,
     ) -> Self {
         Player {
-            length: if (length as usize) < MAX_LENGTH {
-                length.into()
-            } else {
-                MAX_LENGTH as u32 - 1
-            },
+            length: INITIAL_LENGTH,
             clock: 0,
             state: State::Stopped,
             sequence: Sequence::new(midi_sender.clone(), channel),
@@ -248,8 +245,16 @@ impl Player {
                     self.stop()
                 }
                 PlayerAction::Insert(e, s, o) => self.insert(e, s, o),
-                PlayerAction::SetDivisor(d) if d > 0 => self.pps = (PPQ * 4) / (d as u32),
-                _ => {}
+                PlayerAction::SetDivisor(d) => {
+                    if d > 0 {
+                        self.pps = (PPQ * 4) / (d as u32)
+                    }
+                }
+                PlayerAction::SetLength(length) => {
+                    if length > 0 && length <= 32 {
+                        self.length = length
+                    }
+                }
             },
         }
     }
@@ -286,13 +291,13 @@ impl Player {
 
     fn get_ts(&self) -> TimeStamp {
         TimeStamp {
-            step: (self.clock / self.pps) % self.length,
+            step: (self.clock / self.pps) % self.length as u32,
             sub: (self.clock % self.pps) * SUBS_PER_STEP / self.pps,
         }
     }
 
     pub fn insert(&mut self, event: LiveEvent, step: u32, _offset: f32) {
-        if step >= self.length {
+        if step >= self.length as u32 {
             panic!();
         }
         let offset = if _offset > 1.0 { 1.0 } else { _offset };

@@ -234,11 +234,11 @@ mod midi_master {
 
         let midi_mapper = MidiMapper::new(Config::two_mono(), output_sender.clone());
         let players = [
-            Player::new(0, 8, 8, midi_sender.clone(), output_sender.clone()),
-            Player::new(1, 8, 8, midi_sender.clone(), output_sender.clone()),
-            Player::new(2, 8, 8, midi_sender.clone(), output_sender.clone()),
-            Player::new(3, 8, 8, midi_sender.clone(), output_sender.clone()),
-            Player::new(4, 8, 8, midi_sender.clone(), output_sender.clone()),
+            Player::new(0, 8, midi_sender.clone(), output_sender.clone()),
+            Player::new(1, 8, midi_sender.clone(), output_sender.clone()),
+            Player::new(2, 8, midi_sender.clone(), output_sender.clone()),
+            Player::new(3, 8, midi_sender.clone(), output_sender.clone()),
+            Player::new(4, 8, midi_sender.clone(), output_sender.clone()),
         ];
         let programmer = Programmer::new(player_sender.clone(), output_sender.clone());
 

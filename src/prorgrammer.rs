@@ -4,7 +4,7 @@ use midly::MidiMessage;
 use crate::commando_unit::Operation;
 use crate::midi_master::MessageSender;
 use crate::outs::{Gate, OutputRequest};
-use crate::player::{PlayerAction, PlayerMessage};
+use crate::player::{PlayerAction, PlayerMessage, INITIAL_LENGTH, MAX_LENGTH};
 use crate::utils::key_names::{is_white, key_to_note, to_deg, Note};
 
 enum Mode {
@@ -48,6 +48,7 @@ pub struct Programmer {
     mode: Mode,
     modifier: Modifier,
     props: Option<EventProps>,
+    lengths: [u8; 5],
     player_sender: MessageSender<PlayerMessage>,
     output_sender: MessageSender<OutputRequest>,
 }
@@ -60,7 +61,8 @@ impl Programmer {
         Programmer {
             channel: 0,
             step: 0,
-            length: 8,
+            length: INITIAL_LENGTH,
+            lengths: [INITIAL_LENGTH; 5],
             mode: Mode::Normal,
             modifier: Modifier::Gate,
             player_sender,
@@ -84,8 +86,7 @@ impl Programmer {
                     self.props = None;
                     if self.step < self.length - 1 {
                         self.step += 1;
-                    }
-                    if self.step == self.length - 1 {
+                    } else {
                         self.output_sender
                             .try_send(OutputRequest::Flash(Gate::Stop))
                             .ok();
@@ -162,12 +163,28 @@ impl Programmer {
             Note::Gb => self.send_action(PlayerAction::SetDivisor(4)),
             Note::G => self.channel = 4,
             Note::Ab => self.send_action(PlayerAction::SetDivisor(8)),
-            Note::A => {}
+            Note::A => {
+                self.length = if self.length < (MAX_LENGTH - 4) as u8 {
+                    self.length + 4
+                } else {
+                    self.length
+                };
+                self.lengths[self.channel as usize] = self.length;
+                self.send_action(PlayerAction::SetLength(self.length));
+            }
             Note::Bb => self.send_action(PlayerAction::SetDivisor(16)),
-            Note::B => {}
+            Note::B => {
+                self.length = if self.length > 4 {
+                    self.length - 4
+                } else {
+                    self.length
+                };
+                self.lengths[self.channel as usize] = self.length;
+                self.send_action(PlayerAction::SetLength(self.length))
+            }
         }
         self.step = 0;
-        // Do length horrors
+        self.length = self.lengths[self.channel as usize];
     }
 
     fn send_action(&mut self, action: PlayerAction) {
