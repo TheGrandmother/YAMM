@@ -85,6 +85,11 @@ impl Programmer {
                     if self.step < self.length - 1 {
                         self.step += 1;
                     }
+                    if self.step == self.length - 1 {
+                        self.output_sender
+                            .try_send(OutputRequest::Flash(Gate::Stop))
+                            .ok();
+                    }
                 }
                 _ => {}
             },
@@ -114,40 +119,30 @@ impl Programmer {
                 vel,
                 shift,
             }) => {
-                self.player_sender
-                    .try_send(PlayerMessage::Action(
-                        self.channel,
-                        PlayerAction::Insert(
+                self.send_action(PlayerAction::Insert(
+                    LiveEvent::Midi {
+                        channel: self.channel.into(),
+                        message: MidiMessage::NoteOn {
+                            key: key.into(),
+                            vel: ((vel * 127.0) as u8).into(),
+                        },
+                    },
+                    self.step.into(),
+                    shift,
+                ));
+                match gate {
+                    Some(g) => {
+                        self.send_action(PlayerAction::Insert(
                             LiveEvent::Midi {
                                 channel: self.channel.into(),
-                                message: MidiMessage::NoteOn {
+                                message: MidiMessage::NoteOff {
                                     key: key.into(),
                                     vel: ((vel * 127.0) as u8).into(),
                                 },
                             },
                             self.step.into(),
-                            shift,
-                        ),
-                    ))
-                    .ok();
-                match gate {
-                    Some(g) => {
-                        self.player_sender
-                            .try_send(PlayerMessage::Action(
-                                self.channel,
-                                PlayerAction::Insert(
-                                    LiveEvent::Midi {
-                                        channel: self.channel.into(),
-                                        message: MidiMessage::NoteOff {
-                                            key: key.into(),
-                                            vel: ((vel * 127.0) as u8).into(),
-                                        },
-                                    },
-                                    self.step.into(),
-                                    shift + g,
-                                ),
-                            ))
-                            .ok();
+                            shift + g,
+                        ));
                     }
                     None => {}
                 }
@@ -159,20 +154,26 @@ impl Programmer {
     fn set_conf(&mut self, key: u8) {
         match key_to_note(key) {
             Note::C => self.channel = 0,
-            Note::Db => {}
+            Note::Db => self.send_action(PlayerAction::SetDivisor(1)),
             Note::D => self.channel = 1,
-            Note::Eb => {}
+            Note::Eb => self.send_action(PlayerAction::SetDivisor(2)),
             Note::E => self.channel = 2,
             Note::F => self.channel = 3,
-            Note::Gb => {}
+            Note::Gb => self.send_action(PlayerAction::SetDivisor(4)),
             Note::G => self.channel = 4,
-            Note::Ab => {}
+            Note::Ab => self.send_action(PlayerAction::SetDivisor(8)),
             Note::A => {}
-            Note::Bb => {}
+            Note::Bb => self.send_action(PlayerAction::SetDivisor(16)),
             Note::B => {}
         }
         self.step = 0;
         // Do length horrors
+    }
+
+    fn send_action(&mut self, action: PlayerAction) {
+        self.player_sender
+            .try_send(PlayerMessage::Action(self.channel, action))
+            .ok();
     }
 
     fn modify(&mut self, key: u8) {

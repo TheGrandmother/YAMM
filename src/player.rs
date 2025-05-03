@@ -190,6 +190,7 @@ pub enum PlayerAction {
     Play,
     Tick,
     Stop,
+    SetDivisor(u8),
     Insert(LiveEvent<'static>, u32, f32),
 }
 
@@ -247,6 +248,8 @@ impl Player {
                     self.stop()
                 }
                 PlayerAction::Insert(e, s, o) => self.insert(e, s, o),
+                PlayerAction::SetDivisor(d) if d > 0 => self.pps = (PPQ * 4) / (d as u32),
+                _ => {}
             },
         }
     }
