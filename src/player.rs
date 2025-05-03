@@ -113,7 +113,7 @@ impl Sequence {
         return count;
     }
 
-    pub fn insert(&mut self, event: Event) {
+    fn insert(&mut self, event: Event) {
         for i in 0..STEP_CAP {
             match self.steps[event.ts.step as usize][i] {
                 Some(e) if event.replaces(e) => {
@@ -129,7 +129,7 @@ impl Sequence {
         }
     }
 
-    pub fn emit(&mut self, ts1: TimeStamp, ts2: TimeStamp) {
+    fn emit(&mut self, ts1: TimeStamp, ts2: TimeStamp) {
         let step = self.steps[ts1.step as usize];
 
         let mut emitted_ts: Option<TimeStamp> = None;
@@ -137,7 +137,7 @@ impl Sequence {
         for maybe_event in step {
             match maybe_event {
                 Some(Event { ts, midi_event }) => {
-                    if ts >= ts1 && ts <= ts2 {
+                    if ts >= ts1 && (ts <= ts2 || ts1 > ts2) {
                         if emitted_ts == None || Some(ts) == emitted_ts {
                             self.sender.try_send(midi_event).ok();
                             emitted_ts = Some(ts)
@@ -154,11 +154,13 @@ impl Sequence {
             for maybe_event in step {
                 match maybe_event {
                     Some(Event { ts, midi_event }) => {
-                        if emitted_ts == None || Some(ts) == emitted_ts {
-                            self.sender.try_send(midi_event).ok();
-                            emitted_ts = Some(ts)
-                        } else {
-                            self.overflow.enqueue(midi_event).ok();
+                        if ts <= ts2 {
+                            if emitted_ts == None || Some(ts) == emitted_ts {
+                                self.sender.try_send(midi_event).ok();
+                                emitted_ts = Some(ts)
+                            } else {
+                                self.overflow.enqueue(midi_event).ok();
+                            }
                         }
                     }
                     None => {}

@@ -81,10 +81,15 @@ post
   (new_ts.sub = ((clock rem pps) * subs_per_step / pps))
 ;
 
-pure get_passed_events(old_ts: TimeStamp, new_ts: TimeStamp) emitted: set of Event
-pre old_ts <= new_ts
+pure get_passed_events(old_ts: TimeStamp, new_ts: TimeStamp) passed: set of Event
+pre new_ts.step = 0 or new_ts.step - old_ts.step <= 1 -- We go at most one step
 post
-  forall e in set sequence & (e.ts > old_ts and e.ts <= new_ts) => e in set emitted
+  -- forall e in set sequence & ((e.ts > old_ts or new_ts.step < old_ts.step) and e.ts <= new_ts) => e in set emitted
+  forall e in set sequence & let
+    no_wrap = old_ts <= new_ts and e.ts > old_ts and e.ts <= new_ts,
+    wrap = new_ts.step < old_ts.step and e.ts.step = new_ts.step and e.ts < new_ts
+  in
+   no_wrap or wrap => e in set passed
 ;
 
 functions
