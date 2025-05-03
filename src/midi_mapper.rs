@@ -139,6 +139,21 @@ impl Config {
         }
     }
 
+    pub fn two_fancy_mono() -> Self {
+        Config {
+            drum_channel: 4.into(),
+            port_mappings: [
+                Some([Some(Port::A), None, None, None]),
+                Some([None, Some(Port::B), None, None]),
+                None,
+                None,
+            ],
+            vel_mappings: [None, None, None, None],
+            aftertouch: Some(Port::D),
+            mod_port: Some(Port::C),
+        }
+    }
+
     pub fn one_duo() -> Self {
         Config {
             drum_channel: 4.into(),
@@ -403,7 +418,19 @@ impl MidiMapper {
                 123 => self.all_notes_off(),
                 _ => {}
             },
+            MidiMessage::ChannelAftertouch { vel } => self.on_aftertouch(vel),
             _ => {}
+        }
+    }
+
+    fn on_aftertouch(&mut self, value: u7) {
+        match self.config.aftertouch {
+            Some(port) => {
+                self.io_sender
+                    .try_send(port.request_set_val(value.as_int() as f32 / 127.0))
+                    .ok();
+            }
+            None => {}
         }
     }
 
