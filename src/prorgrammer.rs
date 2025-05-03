@@ -55,7 +55,7 @@ impl Programmer {
         Programmer {
             channel: 0,
             step: 0,
-            length: 8,
+            length: 4,
             mode: Mode::Normal,
             modifier: Modifier::Gate,
             player_sender,
@@ -76,6 +76,9 @@ impl Programmer {
                     self.emit();
                     self.mode = Mode::Normal;
                     self.props = None;
+                    if self.step < self.length - 1 {
+                        self.step += 1
+                    }
                 }
                 _ => {}
             },
@@ -162,7 +165,7 @@ impl Programmer {
         }
         match self.props {
             Some(mut p) => {
-                let mut diff = to_deg(key) - to_deg(p.key);
+                let mut diff = key as i8 - p.key as i8;
                 diff = if diff > 0 { diff } else { diff * -1 };
                 let value = match diff {
                     0 => return,

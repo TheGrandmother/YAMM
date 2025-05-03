@@ -1,5 +1,7 @@
 use core::cmp::Ordering;
 
+use heapless::spsc::Queue;
+use heapless::Vec;
 use midly::live::LiveEvent;
 use midly::MidiMessage;
 
@@ -81,6 +83,7 @@ struct Sequence {
     steps: [Step; MAX_LENGTH],
     sender: MessageSender<LiveEvent<'static>>,
     channel: u8,
+    overflow: Queue<LiveEvent<'static>, 8>,
 }
 
 impl Sequence {
@@ -89,7 +92,12 @@ impl Sequence {
             steps: [[None; STEP_CAP]; MAX_LENGTH],
             sender,
             channel,
+            overflow: Queue::new(),
         }
+    }
+
+    fn clear_queue(&mut self) {
+        self.overflow = Queue::new()
     }
 
     fn count(&self) -> u32 {
@@ -123,11 +131,19 @@ impl Sequence {
 
     pub fn emit(&mut self, ts1: TimeStamp, ts2: TimeStamp) {
         let step = self.steps[ts1.step as usize];
+
+        let mut emitted_ts: Option<TimeStamp> = None;
+
         for maybe_event in step {
             match maybe_event {
                 Some(Event { ts, midi_event }) => {
                     if ts >= ts1 && ts <= ts2 {
-                        self.sender.try_send(midi_event).ok();
+                        if emitted_ts == None || Some(ts) == emitted_ts {
+                            self.sender.try_send(midi_event).ok();
+                            emitted_ts = Some(ts)
+                        } else {
+                            self.overflow.enqueue(midi_event).ok();
+                        }
                     }
                 }
                 None => {}
@@ -138,12 +154,24 @@ impl Sequence {
             for maybe_event in step {
                 match maybe_event {
                     Some(Event { ts, midi_event }) => {
-                        if ts >= ts1 && ts <= ts2 {
+                        if emitted_ts == None || Some(ts) == emitted_ts {
                             self.sender.try_send(midi_event).ok();
+                            emitted_ts = Some(ts)
+                        } else {
+                            self.overflow.enqueue(midi_event).ok();
                         }
                     }
                     None => {}
                 }
+            }
+        }
+
+        if emitted_ts == None {
+            match self.overflow.dequeue() {
+                Some(event) => {
+                    self.sender.try_send(event).ok();
+                }
+                None => {}
             }
         }
     }
@@ -236,6 +264,7 @@ impl Player {
                 /*Issue all notes off*/
                 self.clock = 0;
                 self.state = State::Stopped;
+                self.sequence.clear_queue();
             }
             State::Stopped => {}
         }

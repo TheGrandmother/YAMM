@@ -233,7 +233,7 @@ mod midi_master {
         let (commando_sender, command_receiver) = make_channel!(CommandEvent, MESSAGE_CAPACITY);
 
         let midi_mapper = MidiMapper::new(Config::two_mono(), output_sender.clone());
-        let player = Player::new(0, 8, 8, midi_sender.clone(), output_sender.clone());
+        let player = Player::new(0, 8, 4, midi_sender.clone(), output_sender.clone());
         let programmer = Programmer::new(player_sender.clone());
 
         let commando = CommandoUnit::new();
