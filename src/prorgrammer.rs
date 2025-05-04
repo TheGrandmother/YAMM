@@ -74,7 +74,7 @@ impl Programmer {
     pub fn handle_operation(&mut self, op: Operation) {
         match self.mode {
             Mode::Insert => match op {
-                Operation::ModifierSwitch => {}
+                Operation::ModifierSwitch => self.switch_modifier(),
                 Operation::Modify(key) => self.modify(key),
                 Operation::Tie => match self.props {
                     Some(e) => self.props = Some(e.tie()),

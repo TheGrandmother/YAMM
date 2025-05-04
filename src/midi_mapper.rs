@@ -163,9 +163,9 @@ impl Config {
                 None,
                 None,
             ],
-            vel_mappings: [None, None, None, None],
-            aftertouch: Some(Port::D),
-            mod_port: Some(Port::C),
+            vel_mappings: [Some(Port::C), None, None, None],
+            aftertouch: None,
+            mod_port: Some(Port::D),
         }
     }
 
