@@ -5,11 +5,13 @@ pub enum Operation {
     Restart,
     PlayerConf(u8),
     ModifierSwitch,
-    Modify(u8),
+    Modify(u8, bool),
     Tie,
     Begin(u8),
     Commit,
+    Abort,
 }
+use Operation::*;
 
 #[derive(Copy, Clone, PartialEq)]
 pub enum Input {
@@ -81,8 +83,8 @@ impl CommandoUnit {
             }
             Progress::Done(op) => {
                 match op {
-                    Operation::Begin(_) => self.state = CommandState::Editing,
-                    Operation::Commit => self.state = CommandState::Normal,
+                    Begin(_) => self.state = CommandState::Editing,
+                    Commit | Modify(_, true) | Abort => self.state = CommandState::Normal,
                     _ => {}
                 };
                 self.reset();
@@ -95,35 +97,44 @@ impl CommandoUnit {
     fn interpret_sequence(&mut self) -> Progress {
         match self.state {
             CommandState::Editing => match self.sequence {
-                [Up(MidiKey(key)), Empty, Empty] if Some(key) == self.comitted_key => {
-                    Done(Operation::Commit)
-                }
+                [Up(MidiKey(key)), Empty, Empty] if Some(key) == self.comitted_key => Done(Commit),
                 [Down(_), Empty, Empty] => Continue,
                 [Down(_), Down(_), Empty] => Continue,
-                [Down(Step), Up(Step), Empty] => Done(Operation::Tie),
-                [Down(Rec), Up(Rec), Empty] => Done(Operation::ModifierSwitch),
-                [Down(MidiKey(key1)), Up(MidiKey(key2)), Empty] if key1 == key2 => {
-                    Done(Operation::Modify(key1))
+                [Down(Step), Up(Step), Empty] => Done(Tie),
+                [Down(Rec), Up(Rec), Empty] => Done(ModifierSwitch),
+                [Down(MidiKey(k1)), Up(MidiKey(k2)), Empty] if k1 == k2 => Done(Modify(k1, false)),
+                [Down(MidiKey(k1)), Up(MidiKey(k2)), hmm] if Some(k2) == self.comitted_key => {
+                    match hmm {
+                        Empty => Continue,
+                        Up(MidiKey(k3)) if k3 == k1 => Done(Modify(k1, true)),
+                        Down(MidiKey(k3)) if k3 == k2 => {
+                            self.sequence = [Down(MidiKey(k1)), Empty, Empty];
+                            Continue
+                        }
+                        Down(MidiKey(_)) => Done(Abort),
+                        _ => Invalid,
+                    }
+                    //
                 }
                 _ => Invalid,
             },
             CommandState::Normal => match self.sequence {
                 [Down(MidiKey(key)), Empty, Empty] => {
                     self.comitted_key = Some(key);
-                    Done(Operation::Begin(key))
+                    Done(Begin(key))
                 }
                 [Down(_), Empty, Empty] => Continue,
-                [Down(Play), Up(Play), Empty] => Done(Operation::Audit),
-                [Down(Step), Up(Step), Empty] => Done(Operation::Advance),
+                [Down(Play), Up(Play), Empty] => Done(Audit),
+                [Down(Step), Up(Step), Empty] => Done(Advance),
                 [Down(_), Down(_), Empty] => Continue,
                 [Down(i), Down(j), Up(k)] if j == k => match i {
                     Play => match j {
-                        MidiKey(key) => Done(Operation::PlayerConf(key)),
-                        Step => Done(Operation::Restart),
+                        MidiKey(key) => Done(PlayerConf(key)),
+                        Step => Done(Restart),
                         _ => Invalid,
                     },
                     Step => match j {
-                        Rec => Done(Operation::Back),
+                        Rec => Done(Back),
                         _ => Invalid,
                     },
                     _ => Invalid,

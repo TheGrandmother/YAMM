@@ -73,29 +73,41 @@ impl Programmer {
 
     pub fn handle_operation(&mut self, op: Operation) {
         match self.mode {
+            Mode::Insert => {
+                self.output_sender
+                    .try_send(OutputRequest::GateOn(Gate::Accent))
+                    .ok();
+            }
+            Mode::Normal => {
+                self.output_sender
+                    .try_send(OutputRequest::GateOff(Gate::Accent))
+                    .ok();
+            }
+        }
+        match self.mode {
             Mode::Insert => match op {
                 Operation::ModifierSwitch => self.switch_modifier(),
-                Operation::Modify(key) => self.modify(key),
+                Operation::Modify(key, commit) => {
+                    self.modify(key);
+                    if commit {
+                        self.commit()
+                    }
+                }
                 Operation::Tie => match self.props {
                     Some(e) => self.props = Some(e.tie()),
                     None => {}
                 },
-                Operation::Commit => {
-                    self.emit();
+                Operation::Commit => self.commit(),
+                Operation::Abort => {
                     self.mode = Mode::Normal;
                     self.props = None;
-                    if self.step < self.length - 1 {
-                        self.step += 1;
-                    } else {
-                        self.output_sender
-                            .try_send(OutputRequest::Flash(Gate::Stop))
-                            .ok();
-                    }
                 }
                 _ => {}
             },
             Mode::Normal => match op {
-                Operation::Advance if self.step < self.length - 1 => self.step += 1,
+                Operation::Advance => {
+                    self.advance();
+                }
                 Operation::Back if self.step > 0 => self.step -= 1,
                 Operation::Restart => self.step = 0,
                 Operation::Audit => {}
@@ -110,6 +122,38 @@ impl Programmer {
                 _ => {}
             },
         }
+        match self.mode {
+            Mode::Insert => {
+                self.output_sender
+                    .try_send(OutputRequest::GateOn(Gate::Accent))
+                    .ok();
+            }
+            Mode::Normal => {
+                self.output_sender
+                    .try_send(OutputRequest::GateOff(Gate::Accent))
+                    .ok();
+            }
+        }
+    }
+
+    fn advance(&mut self) {
+        if self.step < self.length - 1 {
+            self.step += 1;
+            self.output_sender
+                .try_send(OutputRequest::Flash(Gate::Clock))
+                .ok();
+        } else {
+            self.output_sender
+                .try_send(OutputRequest::Flash(Gate::Stop))
+                .ok();
+        }
+    }
+
+    fn commit(&mut self) {
+        self.emit();
+        self.mode = Mode::Normal;
+        self.props = None;
+        self.advance();
     }
 
     fn emit(&mut self) {

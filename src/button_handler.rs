@@ -7,13 +7,24 @@ use crate::commando_unit::{CommandEvent, Input};
 use crate::midi_master::MessageSender;
 use crate::Mono;
 
+type Mjau = Instant<u64, 1, 1_000_000>;
+
+#[derive(Copy, Clone)]
+enum State {
+    Unknown,
+    Invalid,
+    Down(Mjau), // Went down at
+    Up(Mjau),
+}
+
 pub struct ButtonHandler {
     play_btn: Pin<gpio::bank0::Gpio11, gpio::FunctionSioInput, gpio::PullUp>,
-    play_ts: Instant<u64, 1, 1_000_000>,
+    play_state: State,
     step_btn: Pin<gpio::bank0::Gpio12, gpio::FunctionSioInput, gpio::PullUp>,
-    step_ts: Instant<u64, 1, 1_000_000>,
+    step_state: State,
     rec_btn: Pin<gpio::bank0::Gpio13, gpio::FunctionSioInput, gpio::PullUp>,
-    rec_ts: Instant<u64, 1, 1_000_000>,
+    rec_state: State,
+    holdoff: Duration<u64, 1, 1000000>,
     commando_sender: MessageSender<CommandEvent>,
 }
 
@@ -29,9 +40,10 @@ impl ButtonHandler {
             step_btn,
             rec_btn,
             commando_sender,
-            play_ts: Mono::now(),
-            rec_ts: Mono::now(),
-            step_ts: Mono::now(),
+            play_state: State::Unknown,
+            rec_state: State::Unknown,
+            step_state: State::Unknown,
+            holdoff: 5.millis::<1, 1_000_000>(),
         };
         me.play_btn.set_interrupt_enabled(Interrupt::EdgeLow, true);
         me.play_btn.set_interrupt_enabled(Interrupt::EdgeHigh, true);
@@ -43,21 +55,46 @@ impl ButtonHandler {
         me
     }
 
-    fn get_last_sat(&self, id: DynPinId) -> Instant<u64, 1, 1000000> {
+    fn get_state(&mut self, id: DynPinId) -> State {
         match id.num {
-            11 => self.play_ts,
-            12 => self.step_ts,
-            13 => self.rec_ts,
-            _ => Mono::now(), // Really silly
+            11 => self.play_state,
+            12 => self.step_state,
+            13 => self.rec_state,
+            _ => State::Invalid,
         }
     }
 
-    fn set_last_sat(&mut self, id: DynPinId) {
+    fn can_down(&mut self, id: DynPinId) -> bool {
+        match self.get_state(id) {
+            State::Unknown => true,
+            State::Up(x) if Mono::now() > x + self.holdoff => true,
+            _ => false,
+        }
+    }
+
+    fn can_up(&mut self, id: DynPinId) -> bool {
+        match self.get_state(id) {
+            State::Unknown => true,
+            State::Down(x) if Mono::now() > x + self.holdoff => true,
+            _ => false,
+        }
+    }
+
+    fn go_down(&mut self, id: DynPinId) {
         match id.num {
-            11 => self.play_ts = Mono::now(),
-            12 => self.step_ts = Mono::now(),
-            13 => self.rec_ts = Mono::now(),
-            _ => {} // Really silly
+            11 => self.play_state = State::Down(Mono::now()),
+            12 => self.step_state = State::Down(Mono::now()),
+            13 => self.rec_state = State::Down(Mono::now()),
+            _ => {}
+        }
+    }
+
+    fn go_up(&mut self, id: DynPinId) {
+        match id.num {
+            11 => self.play_state = State::Up(Mono::now()),
+            12 => self.step_state = State::Up(Mono::now()),
+            13 => self.rec_state = State::Up(Mono::now()),
+            _ => {}
         }
     }
 
@@ -71,60 +108,65 @@ impl ButtonHandler {
     }
 
     pub fn handle_irq(&mut self) {
-        let holdoff = 10.millis::<1, 1_000_000>();
         if self.play_btn.interrupt_status(Interrupt::EdgeLow) {
-            if Mono::now() > self.get_last_sat(self.play_btn.id()) + holdoff {
+            if self.can_down(self.play_btn.id()) {
                 self.commando_sender
                     .try_send(CommandEvent::Down(Input::Play))
                     .ok();
-                self.set_last_sat(self.play_btn.id())
+
+                self.go_down(self.play_btn.id())
             }
             self.play_btn.clear_interrupt(Interrupt::EdgeLow);
         }
         if self.play_btn.interrupt_status(Interrupt::EdgeHigh) {
-            if Mono::now() > self.get_last_sat(self.play_btn.id()) + holdoff {
+            if self.can_up(self.play_btn.id()) {
                 self.commando_sender
                     .try_send(CommandEvent::Up(Input::Play))
                     .ok();
-                self.set_last_sat(self.play_btn.id())
+
+                self.go_up(self.play_btn.id())
             }
             self.play_btn.clear_interrupt(Interrupt::EdgeHigh);
         }
 
         if self.step_btn.interrupt_status(Interrupt::EdgeLow) {
-            if Mono::now() > self.get_last_sat(self.step_btn.id()) + holdoff {
+            if self.can_down(self.step_btn.id()) {
                 self.commando_sender
                     .try_send(CommandEvent::Down(Input::Step))
                     .ok();
-                self.set_last_sat(self.step_btn.id())
+
+                self.go_down(self.step_btn.id())
             }
             self.step_btn.clear_interrupt(Interrupt::EdgeLow);
         }
         if self.step_btn.interrupt_status(Interrupt::EdgeHigh) {
-            if Mono::now() > self.get_last_sat(self.step_btn.id()) + holdoff {
+            if self.can_up(self.step_btn.id()) {
                 self.commando_sender
                     .try_send(CommandEvent::Up(Input::Step))
                     .ok();
-                self.set_last_sat(self.step_btn.id())
+
+                self.go_up(self.step_btn.id())
             }
             self.step_btn.clear_interrupt(Interrupt::EdgeHigh);
         }
 
         if self.rec_btn.interrupt_status(Interrupt::EdgeLow) {
-            if Mono::now() > self.get_last_sat(self.rec_btn.id()) + holdoff {
+            if self.can_down(self.rec_btn.id()) {
                 self.commando_sender
                     .try_send(CommandEvent::Down(Input::Rec))
                     .ok();
-                self.set_last_sat(self.rec_btn.id())
+
+                self.go_down(self.rec_btn.id())
             }
             self.rec_btn.clear_interrupt(Interrupt::EdgeLow);
         }
         if self.rec_btn.interrupt_status(Interrupt::EdgeHigh) {
-            if Mono::now() > self.get_last_sat(self.rec_btn.id()) + holdoff {
+            if self.can_up(self.rec_btn.id()) {
                 self.commando_sender
                     .try_send(CommandEvent::Up(Input::Rec))
                     .ok();
-                self.set_last_sat(self.rec_btn.id())
+
+                self.go_up(self.rec_btn.id())
             }
             self.rec_btn.clear_interrupt(Interrupt::EdgeHigh);
         }
