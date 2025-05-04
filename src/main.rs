@@ -112,6 +112,7 @@ mod midi_master {
         led: gpio::Pin<DynPinId, gpio::FunctionSioOutput, gpio::PullDown>,
         output_sender: MessageSender<OutputRequest>,
         rec_switch: Pin<gpio::bank0::Gpio2, gpio::FunctionSioInput, gpio::PullUp>,
+        perform_switch: Pin<gpio::bank0::Gpio3, gpio::FunctionSioInput, gpio::PullUp>,
     }
 
     #[init()]
@@ -272,6 +273,7 @@ mod midi_master {
                 led,
                 output_sender: output_sender.clone(),
                 rec_switch: pins.gpio2.reconfigure(),
+                perform_switch: pins.gpio3.reconfigure(),
             },
             Local {
                 usb_bus,
@@ -325,32 +327,25 @@ mod midi_master {
         }
     }
 
-    #[task(priority=1, local = [commando_player_sender, commando, programmer], shared=[led, &rec_switch])]
+    #[task(priority=1, local = [commando_player_sender, commando, programmer], shared=[led, &rec_switch, &perform_switch])]
     async fn command_handler(
-        mut c: command_handler::Context,
+        c: command_handler::Context,
         mut receiver: MessageReceiver<CommandEvent>,
     ) {
         loop {
             // FOR SOME HORRID REASON I CANNOT USE ASYNC HERE!?
+            let recording = c.shared.rec_switch.is_high().unwrap_or(false);
+            let performing = c.shared.perform_switch.is_high().unwrap_or(false);
             match receiver.try_recv() {
-                Ok(event) if c.shared.rec_switch.is_high().unwrap_or(false) => {
-                    match c.local.commando.handle_event(event) {
-                        Some(op) => {
-                            match op {
-                                Operation::Begin(_) => {}
-                                Operation::Commit => {
-                                    c.shared.led.lock(|led| {
-                                        if led.is_high().unwrap() {
-                                            led.set_low().unwrap()
-                                        } else {
-                                            led.set_high().unwrap()
-                                        }
-                                    });
-                                }
-                                _ => {}
-                            }
-                            c.local.programmer.handle_operation(op)
+                Ok(event) if recording || performing => {
+                    match c.local.commando.handle_event(event, performing) {
+                        Some(Operation::Perform(channel, action)) => {
+                            c.local
+                                .commando_player_sender
+                                .try_send(PlayerMessage::Action(channel, action))
+                                .ok();
                         }
+                        Some(op) => c.local.programmer.handle_operation(op),
                         None => {}
                     };
                 }
@@ -383,13 +378,14 @@ mod midi_master {
         c.local.button_handler.handle_irq()
     }
 
-    #[task(local = [uart_player_sender, uart_command_sender, midi_sender, uart], shared=[led, &rec_switch], binds=UART0_IRQ)]
+    #[task(local = [uart_player_sender, uart_command_sender, midi_sender, uart], shared=[led, &rec_switch, &perform_switch], binds=UART0_IRQ)]
     fn uart(c: uart::Context) {
         let mut bob = [0u8; 256];
         if !c.local.uart.uart_is_readable() {
             return;
         }
-        let recording = c.shared.rec_switch.is_high().unwrap();
+        let recording = c.shared.rec_switch.is_high().unwrap_or(false);
+        let performing = c.shared.perform_switch.is_high().unwrap_or(false);
         match c.local.uart.read_raw(&mut bob) {
             Ok(bytes) => {
                 if bytes > 0 {
@@ -400,27 +396,31 @@ mod midi_master {
                     match LiveEvent::parse(&bob[bytes_consumed..]) {
                         Ok(event) => {
                             bytes_consumed += event_length(event);
-                            if !recording {
+                            if !recording && !performing {
                                 c.local.midi_sender.try_send(event.to_static()).ok();
                             }
                             match event {
-                                LiveEvent::Midi { message, .. } if recording => match message {
-                                    MidiMessage::NoteOn { key, .. } => {
-                                        c.local
-                                            .uart_command_sender
-                                            .try_send(CommandEvent::Down(Input::MidiKey(
-                                                key.into(),
-                                            )))
-                                            .ok();
+                                LiveEvent::Midi { message, .. } if recording || performing => {
+                                    match message {
+                                        MidiMessage::NoteOn { key, .. } => {
+                                            c.local
+                                                .uart_command_sender
+                                                .try_send(CommandEvent::Down(Input::MidiKey(
+                                                    key.into(),
+                                                )))
+                                                .ok();
+                                        }
+                                        MidiMessage::NoteOff { key, .. } => {
+                                            c.local
+                                                .uart_command_sender
+                                                .try_send(CommandEvent::Up(Input::MidiKey(
+                                                    key.into(),
+                                                )))
+                                                .ok();
+                                        }
+                                        _ => {}
                                     }
-                                    MidiMessage::NoteOff { key, .. } => {
-                                        c.local
-                                            .uart_command_sender
-                                            .try_send(CommandEvent::Up(Input::MidiKey(key.into())))
-                                            .ok();
-                                    }
-                                    _ => {}
-                                },
+                                }
 
                                 LiveEvent::Realtime(msg) if !recording => match msg {
                                     midly::live::SystemRealtime::TimingClock => {
@@ -447,28 +447,13 @@ mod midi_master {
                             }
                         }
                         Err(_) => {
-                            // c.shared.led.lock(|led| {
-                            //     if led.is_high().unwrap() {
-                            //         led.set_low().unwrap()
-                            //     } else {
-                            //         led.set_high().unwrap()
-                            //     }
-                            // });
                             return;
                         }
                     }
                 }
             }
             Err(Error::WouldBlock) => {}
-            Err(Error::Other(_)) => {
-                // c.shared.led.lock(|led| {
-                //     if led.is_high().unwrap() {
-                //         led.set_low().unwrap()
-                //     } else {
-                //         led.set_high().unwrap()
-                //     }
-                // });
-            }
+            Err(Error::Other(_)) => {}
         };
     }
 

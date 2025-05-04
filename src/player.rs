@@ -1,4 +1,5 @@
 use core::cmp::Ordering;
+use core::ops::Not;
 
 use heapless::spsc::Queue;
 use heapless::Vec;
@@ -200,6 +201,10 @@ pub enum PlayerAction {
     Insert(LiveEvent<'static>, u32, f32),
     ClearStep(u32),
     ClearPattern,
+    ToggleMute,
+    ToggleHold,  // Local clock will not update
+    SoftRestart, // Local clock sat to 0
+    Snap,        // Local clock syncronizes with global one
 }
 
 #[derive(Copy, Clone)]
@@ -208,15 +213,48 @@ pub enum PlayerMessage {
     Action(u8, PlayerAction),
 }
 
+#[derive(Copy, Clone, PartialEq)]
+enum Modal {
+    True,
+    WillBeFalse,
+    WillBeTrue,
+    False,
+}
+
+impl Not for Modal {
+    type Output = Self;
+    fn not(self) -> Self::Output {
+        match self {
+            Modal::True | Modal::WillBeTrue => Modal::WillBeFalse,
+            _ => Modal::WillBeTrue,
+        }
+    }
+}
+
+impl Modal {
+    fn change(self) -> Self {
+        match self {
+            Modal::WillBeFalse => Modal::False,
+            Modal::WillBeTrue => Modal::True,
+            _ => self,
+        }
+    }
+}
+
 pub struct Player {
     channel: u8,
     length: u8,
     clock: Ticks,
+    global_clock: Ticks,
     state: State,
     sequence: Sequence,
     pps: Ticks,
     midi_sender: MessageSender<LiveEvent<'static>>,
     output_sender: MessageSender<OutputRequest>,
+    mute: bool,
+    hold: Modal,
+    snap: bool,
+    should_restart: bool,
 }
 
 impl Player {
@@ -229,12 +267,17 @@ impl Player {
         Player {
             length: INITIAL_LENGTH,
             clock: 0,
+            global_clock: 0,
             state: State::Stopped,
             sequence: Sequence::new(midi_sender.clone(), channel),
             pps: (PPQ * 4) / divisor,
             midi_sender,
             output_sender,
             channel,
+            mute: false,
+            hold: Modal::False,
+            snap: false,
+            should_restart: false,
         }
     }
 
@@ -265,16 +308,50 @@ impl Player {
                 PlayerAction::ClearPattern => {
                     self.sequence = Sequence::new(self.midi_sender.clone(), self.channel)
                 }
+                PlayerAction::ToggleMute => {
+                    self.mute = !self.mute;
+                    if self.mute {
+                        self.midi_sender
+                            .try_send(make_all_notes_off(self.channel))
+                            .ok();
+                    }
+                }
+                PlayerAction::ToggleHold => self.hold = !self.hold,
+                PlayerAction::SoftRestart => self.should_restart = true,
+                PlayerAction::Snap => {
+                    self.hold = Modal::WillBeFalse;
+                    self.snap = true;
+                }
             },
+        }
+    }
+
+    fn update_modals(&mut self, change: bool) {
+        if change {
+            self.hold = self.hold.change();
+            if self.hold == Modal::False && self.snap {
+                self.clock = self.global_clock;
+                self.snap = false;
+            }
+            if self.should_restart {
+                self.clock = 0;
+                self.should_restart = false;
+            }
         }
     }
 
     fn tick(&mut self) {
         match self.state {
             State::Playing => {
+                let did_change =
+                    self.get_step(self.global_clock) != self.get_step(self.global_clock + 1);
+                self.global_clock += 1;
                 let old_ts = self.get_ts();
-                self.clock += 1;
-                self.sequence.emit(old_ts, self.get_ts());
+                self.update_modals(did_change);
+                self.clock += if self.hold == Modal::False { 1 } else { 0 };
+                if !self.mute && self.hold == Modal::False {
+                    self.sequence.emit(old_ts, self.get_ts())
+                };
             }
             State::Stopped => {}
         }
@@ -292,16 +369,23 @@ impl Player {
             State::Playing => {
                 /*Issue all notes off*/
                 self.clock = 0;
+                self.global_clock = 0; // Assming that all channels receives this
                 self.state = State::Stopped;
+                self.hold = Modal::False;
+                self.mute = false;
                 self.sequence.clear_queue();
             }
             State::Stopped => {}
         }
     }
 
+    fn get_step(&self, tick: Ticks) -> u32 {
+        (tick / self.pps) % self.length as u32
+    }
+
     fn get_ts(&self) -> TimeStamp {
         TimeStamp {
-            step: (self.clock / self.pps) % self.length as u32,
+            step: self.get_step(self.clock),
             sub: (self.clock % self.pps) * SUBS_PER_STEP / self.pps,
         }
     }

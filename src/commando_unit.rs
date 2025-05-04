@@ -12,6 +12,7 @@ pub enum Operation {
     Begin(u8),
     Commit,
     Abort,
+    Perform(u8, PlayerAction),
 }
 use Operation::*;
 
@@ -45,10 +46,14 @@ enum Progress {
 }
 use Progress::*;
 
+use crate::player::PlayerAction;
+use crate::utils::key_names::{key_to_note, Note};
+
 pub struct CommandoUnit {
     state: CommandState,
     sequence: [CommandEvent; 3],
     comitted_key: Option<u8>,
+    performing_channel: u8,
 }
 
 impl CommandoUnit {
@@ -57,6 +62,7 @@ impl CommandoUnit {
             state: CommandState::Normal,
             sequence: [Empty; 3],
             comitted_key: None,
+            performing_channel: 0,
         }
     }
 
@@ -76,27 +82,89 @@ impl CommandoUnit {
         self.sequence = [Empty; 3]
     }
 
-    pub fn handle_event(&mut self, event: CommandEvent) -> Option<Operation> {
+    pub fn handle_event(&mut self, event: CommandEvent, performing: bool) -> Option<Operation> {
         self.append(event);
-        match self.interpret_sequence() {
-            Progress::Invalid => {
-                self.reset();
-                None
+        if performing {
+            match self.interpret_performance_sequence() {
+                Progress::Invalid => {
+                    self.reset();
+                    None
+                }
+                Progress::Done(op) => {
+                    self.reset();
+                    Some(op)
+                }
+                Progress::Continue => None,
             }
-            Progress::Done(op) => {
-                match op {
-                    Begin(_) => self.state = CommandState::Editing,
-                    Commit | Modify(_, true) | Abort => self.state = CommandState::Normal,
-                    _ => {}
-                };
-                self.reset();
-                Some(op)
+        } else {
+            match self.interpret_rec_sequence() {
+                Progress::Invalid => {
+                    self.reset();
+                    None
+                }
+                Progress::Done(op) => {
+                    match op {
+                        Begin(_) => self.state = CommandState::Editing,
+                        Commit | Modify(_, true) | Abort => self.state = CommandState::Normal,
+                        _ => {}
+                    };
+                    self.reset();
+                    Some(op)
+                }
+                Progress::Continue => None,
             }
-            Progress::Continue => None,
         }
     }
 
-    fn interpret_sequence(&mut self) -> Progress {
+    // Doing the performance stuff here is a massive hack
+    // and a feature creep
+    fn interpret_performance_sequence(&mut self) -> Progress {
+        match self.sequence {
+            // Momentary buttons
+            [Down(MidiKey(k)), Empty, Empty] => match key_to_note(k) {
+                Note::C => Done(Perform(self.performing_channel, PlayerAction::ToggleMute)),
+                Note::E => Done(Perform(self.performing_channel, PlayerAction::ToggleHold)),
+                Note::F => Done(Perform(self.performing_channel, PlayerAction::ToggleHold)),
+                _ => Continue,
+            },
+            [Up(MidiKey(k)), Empty, Empty] => match key_to_note(k) {
+                Note::C => Done(Perform(self.performing_channel, PlayerAction::ToggleMute)),
+                Note::E => Done(Perform(self.performing_channel, PlayerAction::ToggleHold)),
+                Note::F => Done(Perform(self.performing_channel, PlayerAction::Snap)),
+                _ => Invalid,
+            },
+            [Down(_), Empty, Empty] => Continue,
+            [Down(MidiKey(k1)), Up(MidiKey(k2)), Empty] if k1 == k2 => match key_to_note(k1) {
+                Note::Db => {
+                    self.performing_channel = 0;
+                    Invalid
+                }
+                Note::D => Done(Perform(self.performing_channel, PlayerAction::ToggleMute)),
+                Note::G => Done(Perform(self.performing_channel, PlayerAction::SoftRestart)),
+                Note::A => Done(Perform(self.performing_channel, PlayerAction::Snap)),
+                Note::Eb => {
+                    self.performing_channel = 1;
+                    Invalid
+                }
+                Note::Gb => {
+                    self.performing_channel = 2;
+                    Invalid
+                }
+                Note::Ab => {
+                    self.performing_channel = 3;
+                    Invalid
+                }
+                Note::Bb => {
+                    self.performing_channel = 4;
+                    Invalid
+                }
+                _ => Invalid,
+            },
+            _ => Invalid,
+        }
+    }
+
+    fn interpret_rec_sequence(&mut self) -> Progress {
         match self.state {
             CommandState::Editing => match self.sequence {
                 [Up(MidiKey(key)), Empty, Empty] if Some(key) == self.comitted_key => Done(Commit),
@@ -138,6 +206,10 @@ impl CommandoUnit {
                     },
                     Step => match j {
                         Rec => Done(Back),
+                        _ => Invalid,
+                    },
+                    Rec => match j {
+                        Step => Done(ClearPattern),
                         _ => Invalid,
                     },
                     _ => Invalid,

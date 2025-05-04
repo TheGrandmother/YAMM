@@ -1,4 +1,5 @@
 #[repr(u8)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Note {
     C,
     Db,
