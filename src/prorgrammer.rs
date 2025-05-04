@@ -31,7 +31,7 @@ impl EventProps {
         EventProps {
             key,
             gate: Some(0.5),
-            vel: 0.75,
+            vel: 0.50,
             shift: 0.0,
         }
     }
