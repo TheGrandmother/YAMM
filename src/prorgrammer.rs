@@ -119,6 +119,7 @@ impl Programmer {
                     self.modifier = Modifier::Gate;
                     self.props = Some(EventProps::new(key))
                 }
+                Operation::ClearStep => self.send_action(PlayerAction::ClearStep(self.step as u32)),
                 _ => {}
             },
         }

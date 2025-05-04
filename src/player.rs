@@ -100,6 +100,10 @@ impl Sequence {
         self.overflow = Queue::new()
     }
 
+    fn clear_step(&mut self, step: usize) {
+        self.steps[step] = [None; STEP_CAP];
+    }
+
     fn count(&self) -> u32 {
         let mut count = 0;
         for step in self.steps {
@@ -194,6 +198,7 @@ pub enum PlayerAction {
     SetDivisor(u8),
     SetLength(u8),
     Insert(LiveEvent<'static>, u32, f32),
+    ClearStep(u32),
 }
 
 #[derive(Copy, Clone)]
@@ -255,6 +260,7 @@ impl Player {
                         self.length = length
                     }
                 }
+                PlayerAction::ClearStep(step) => self.sequence.clear_step(step as usize),
             },
         }
     }

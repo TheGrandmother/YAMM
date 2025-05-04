@@ -3,6 +3,7 @@ pub enum Operation {
     Back,
     Audit,
     Restart,
+    ClearStep,
     PlayerConf(u8),
     ModifierSwitch,
     Modify(u8, bool),
@@ -126,6 +127,7 @@ impl CommandoUnit {
                 [Down(_), Empty, Empty] => Continue,
                 [Down(Play), Up(Play), Empty] => Done(Audit),
                 [Down(Step), Up(Step), Empty] => Done(Advance),
+                [Down(Rec), Up(Rec), Empty] => Done(ClearStep),
                 [Down(_), Down(_), Empty] => Continue,
                 [Down(i), Down(j), Up(k)] if j == k => match i {
                     Play => match j {

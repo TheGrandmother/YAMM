@@ -436,10 +436,19 @@ impl MidiMapper {
         self.clock += 1;
     }
 
+    fn safe_key(&self, key: u7) -> u7 {
+        if key < 12 {
+            return 12.into();
+        }
+        return key;
+    }
+
     fn handle_pitched_channel(&mut self, msg: MidiMessage, ports: PortMapping) {
         match msg {
-            MidiMessage::NoteOn { key, vel } => self.on_note_on(key + 0.into(), vel, msg, ports),
-            MidiMessage::NoteOff { key, vel } => self.on_note_off(key + 0.into(), vel, ports),
+            MidiMessage::NoteOn { key, vel } => {
+                self.on_note_on(self.safe_key(key), vel, msg, ports)
+            }
+            MidiMessage::NoteOff { key, vel } => self.on_note_off(self.safe_key(key), vel, ports),
             MidiMessage::Controller { controller, value } => match controller.as_int() {
                 1 => self.on_modwheel(value),
                 123 => self.all_notes_off(),
