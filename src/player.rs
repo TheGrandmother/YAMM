@@ -199,6 +199,7 @@ pub enum PlayerAction {
     SetLength(u8),
     Insert(LiveEvent<'static>, u32, f32),
     ClearStep(u32),
+    ClearPattern,
 }
 
 #[derive(Copy, Clone)]
@@ -261,6 +262,9 @@ impl Player {
                     }
                 }
                 PlayerAction::ClearStep(step) => self.sequence.clear_step(step as usize),
+                PlayerAction::ClearPattern => {
+                    self.sequence = Sequence::new(self.midi_sender.clone(), self.channel)
+                }
             },
         }
     }

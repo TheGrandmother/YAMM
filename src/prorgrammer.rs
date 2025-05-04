@@ -120,6 +120,7 @@ impl Programmer {
                     self.props = Some(EventProps::new(key))
                 }
                 Operation::ClearStep => self.send_action(PlayerAction::ClearStep(self.step as u32)),
+                Operation::ClearPattern => self.send_action(PlayerAction::ClearPattern),
                 _ => {}
             },
         }

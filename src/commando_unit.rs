@@ -4,6 +4,7 @@ pub enum Operation {
     Audit,
     Restart,
     ClearStep,
+    ClearPattern,
     PlayerConf(u8),
     ModifierSwitch,
     Modify(u8, bool),
