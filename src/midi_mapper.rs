@@ -109,7 +109,22 @@ impl Config {
         }
     }
 
-    pub fn two_duo() -> Self {
+    pub fn four_indie() -> Self {
+        Config {
+            drum_channel: 4.into(),
+            port_mappings: [
+                Some([Some(Port::A), None, None, None]),
+                Some([None, Some(Port::B), None, None]),
+                Some([None, None, Some(Port::C), None]),
+                Some([None, None, None, Some(Port::D)]),
+            ],
+            vel_mappings: [None; 4],
+            aftertouch: None,
+            mod_port: None,
+        }
+    }
+
+    pub fn two_poly() -> Self {
         Config {
             drum_channel: 4.into(),
             port_mappings: [
@@ -175,6 +190,18 @@ impl Config {
             vel_mappings: [Some(Port::B), None, None, None],
             aftertouch: None,
             mod_port: Some(Port::D),
+        }
+    }
+
+    pub fn select_confg(play: bool, step: bool, rec: bool) -> Self {
+        match (play, step, rec) {
+            (false, false, false) => Self::two_fancy_mono(),
+            (false, false, true) => Self::one_mono(),
+            (false, true, false) => Self::four_indie(),
+            (false, true, true) => Self::four_poly(),
+            (true, false, false) => Self::two_mono(),
+            (true, false, true) => Self::two_poly(),
+            _ => Self::two_fancy_mono(),
         }
     }
 }

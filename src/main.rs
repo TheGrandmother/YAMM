@@ -232,7 +232,23 @@ mod midi_master {
         let (player_sender, player_receiver) = make_channel!(PlayerMessage, MESSAGE_CAPACITY);
         let (commando_sender, command_receiver) = make_channel!(CommandEvent, MESSAGE_CAPACITY);
 
-        let midi_mapper = MidiMapper::new(Config::two_fancy_mono(), output_sender.clone());
+        let commando = CommandoUnit::new();
+
+        let play_pin = pins.gpio11.into_pull_up_input();
+        let step_pin = pins.gpio12.into_pull_up_input();
+        let rec_pin = pins.gpio13.into_pull_up_input();
+        let midi_mapper = MidiMapper::new(
+            Config::select_confg(
+                play_pin.is_low().unwrap_or(false),
+                step_pin.is_low().unwrap_or(false),
+                rec_pin.is_low().unwrap_or(false),
+            ),
+            output_sender.clone(),
+        );
+
+        let button_handler =
+            ButtonHandler::new(play_pin, step_pin, rec_pin, commando_sender.clone());
+
         let players = [
             Player::new(0, 8, midi_sender.clone(), output_sender.clone()),
             Player::new(1, 8, midi_sender.clone(), output_sender.clone()),
@@ -241,14 +257,6 @@ mod midi_master {
             Player::new(4, 8, midi_sender.clone(), output_sender.clone()),
         ];
         let programmer = Programmer::new(player_sender.clone(), output_sender.clone());
-
-        let commando = CommandoUnit::new();
-        let button_handler = ButtonHandler::new(
-            pins.gpio11.reconfigure(),
-            pins.gpio12.reconfigure(),
-            pins.gpio13.reconfigure(),
-            commando_sender.clone(),
-        );
 
         watchdog.start(fugit::ExtU32::micros(50_000));
         watchdog_feeder::spawn().ok();
