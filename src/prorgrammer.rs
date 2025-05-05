@@ -200,15 +200,15 @@ impl Programmer {
 
     fn set_conf(&mut self, key: u8) {
         match key_to_note(key) {
-            Note::C => self.channel = 0,
-            Note::Db => self.send_action(PlayerAction::SetDivisor(1)),
-            Note::D => self.channel = 1,
-            Note::Eb => self.send_action(PlayerAction::SetDivisor(2)),
-            Note::E => self.channel = 2,
-            Note::F => self.channel = 3,
-            Note::Gb => self.send_action(PlayerAction::SetDivisor(4)),
-            Note::G => self.channel = 4,
-            Note::Ab => self.send_action(PlayerAction::SetDivisor(8)),
+            Note::C => self.send_action(PlayerAction::SetDivisor(1)),
+            Note::Db => self.channel = 0,
+            Note::D => self.send_action(PlayerAction::SetDivisor(2)),
+            Note::Eb => self.channel = 1,
+            Note::E => self.send_action(PlayerAction::SetDivisor(4)),
+            Note::F => self.send_action(PlayerAction::SetDivisor(8)),
+            Note::Gb => self.channel = 2,
+            Note::G => self.send_action(PlayerAction::SetDivisor(16)),
+            Note::Ab => self.channel = 3,
             Note::A => {
                 self.length = if self.length < (MAX_LENGTH - 4) as u8 {
                     self.length + 4
@@ -218,7 +218,7 @@ impl Programmer {
                 self.lengths[self.channel as usize] = self.length;
                 self.send_action(PlayerAction::SetLength(self.length));
             }
-            Note::Bb => self.send_action(PlayerAction::SetDivisor(16)),
+            Note::Bb => self.channel = 4,
             Note::B => {
                 self.length = if self.length > 4 {
                     self.length - 4
