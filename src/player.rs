@@ -15,7 +15,7 @@ type Ticks = u32;
 pub const SUBS_PER_STEP: u32 = 128;
 const STEP_CAP: usize = 8;
 pub const MAX_LENGTH: usize = 32;
-pub const INITIAL_LENGTH: u8 = 8;
+pub const INITIAL_LENGTH: u8 = 16;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct TimeStamp {

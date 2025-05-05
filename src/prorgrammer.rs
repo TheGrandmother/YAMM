@@ -244,19 +244,27 @@ impl Programmer {
             Some(mut p) => {
                 let mut diff = key as i8 - p.key as i8;
                 diff = if diff > 0 { diff } else { diff * -1 };
-                let value = match diff {
-                    0 => return,
-                    1 => 0.1,
-                    2 => 0.25,
-                    3 => 0.5,
-                    4 => 0.75,
-                    5 => 0.9,
-                    _ => return,
-                };
-                match self.modifier {
-                    Modifier::Gate => p.gate = Some(value),
-                    Modifier::Vel => p.vel = value,
-                    Modifier::Timing => p.shift = value,
+                if diff < 6 {
+                    let value = match diff {
+                        0 => return,
+                        1 => 0.1,
+                        2 => 0.25,
+                        3 => 0.5,
+                        4 => 0.75,
+                        5 => 0.9,
+                        _ => return,
+                    };
+                    match self.modifier {
+                        Modifier::Gate => p.gate = Some(value),
+                        Modifier::Vel => p.vel = value,
+                        Modifier::Timing => p.shift = value,
+                    }
+                } else {
+                    match diff {
+                        6 => p.key = if p.key < 127 - 12 { p.key + 12 } else { p.key },
+                        7 => p.key = if p.key >= 12 { p.key - 12 } else { p.key },
+                        _ => return,
+                    };
                 }
                 self.props = Some(p)
             }
