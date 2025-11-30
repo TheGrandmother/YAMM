@@ -1,1 +1,1 @@
-`minicom -o -D /dev/ttyACM0 -b 115200`
+Moved to https://codeberg.org/TheGrandmother/master-module
